@@ -1,0 +1,66 @@
+package server
+
+import (
+	"github.com/carloscm/gossie/src/cassandra"
+	"github.com/pomack/thrift4go/lib/go/src/thrift"
+	"net"
+	"errors"
+	"log"
+	"time"
+)
+
+type CassConnection struct {
+	socket *thrift.TNonblockingSocket
+	transport *thrift.TFramedTransport
+	client *cassandra.CassandraClient
+	node string
+	keyspace string
+}
+
+var (
+	ErrorConnectionTimeout = errors.New("Connection timeout")
+)
+
+func Dial(node string, keyspace string, timeout int) (*CassConnection, error) {
+	// resolve the address 
+	addr, err := net.ResolveTCPAddr("tcp", node)
+	if err != nil {
+		return nil, err
+	}
+	// get a socket
+	sock, err := thrift.NewTNonblockingSocketAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+	sock.SetTimeout(int64(timeout) * 1e6)
+
+	// build the client
+	transport := thrift.NewTFramedTransport(sock)
+	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
+	cli := cassandra.NewCassandraClientFactory(transport, protocolFactory)
+
+	// connect, with a timeout of `timeout`
+	ch := make(chan bool, 1)
+	go func() {
+		err = transport.Open()
+		ch <- true
+	}()
+	timedOut := false
+	select {
+		case <-time.After(time.Duration(timeout)*time.Millisecond):
+			timedOut = true
+		case <- ch:
+	}
+	if timedOut {
+		return nil, ErrorConnectionTimeout
+	}
+	// get the version and check for min version and what not
+	ver, err := cli.DescribeVersion()
+	if err != nil {
+		transport.Close()
+		return nil, err
+	}
+	log.Print("Opened new connection, protocol version: ", ver)
+	return &CassConnection{sock, transport, cli, node, keyspace}, nil
+}
+
