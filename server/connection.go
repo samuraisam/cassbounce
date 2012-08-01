@@ -64,3 +64,14 @@ func Dial(node string, keyspace string, timeout int) (*CassConnection, error) {
 	return &CassConnection{sock, transport, cli, node, keyspace}, nil
 }
 
+func (c *CassConnection) Write(buf []byte) (int, error) {
+	return c.socket.Write(buf)
+}
+
+func (c *CassConnection) Read(buf []byte) (int, error) {
+	return c.socket.Read(buf)
+}
+
+func (c *CassConnection) Close() error {
+	return c.transport.Close()
+}
