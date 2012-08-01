@@ -39,6 +39,48 @@ func Listen(address string) {
 	}
 }
 
+/*
+The goal of this thing is to offer a connection pooler for cassandra
+
+NOTES
+
+ - a client should not maintain a connection pool of its own. if this is a web request in a synchronous
+ language like python (and, for example, the django framework, which is also synchronous) then you would
+ open up a connection at the beginning of every request, and kill the connection at the end, in
+ exactly the same way that postgres conections are handeled
+
+ - in that vein (the way postgres connections are handeled in django, for example) we want to treat
+ cassandra the same way (1 connection per request, disconnect at the end)
+
+	1. it enforces the "shared nothing" architecture of a web worker. we don't want to have a shared
+	connection pool in the web worker, as it will be shared amongst threads and processes
+
+	2. makes it easier to reason about the various parallellism methods python implements in web
+	processes. don't worry about sharing a connection pool with your preforkers, for example
+
+	3. we can connect to a local connection pooler which *is* good at things like concurrency and
+	paralellism to handle the work of maintaining connections (state, shared stuff) for us
+
+ - each connection has a keyspace assigned to it. this means we need to inspect the packets somewhat
+ to determine which keyspace to use for each connection. other than that we'll just send stuff
+ directly through to cassandra
+
+TODO
+
+	 - when a client connects and asks for a keyspace, if we have a connection that already has 
+	 the keyspace, then pull one from the pool and use that as the connection by:
+
+	 	+ checkout a connection with the keyspace
+	 	+ send back to the client the keyspace result
+
+	 - if a client connects and asks for a keyspace that is not yet in the pool, create one by:
+	
+		+ connect the socket
+		+ parse the result of the client packet and get the keyspace string
+		+ call set_keyspace with the keyspace string
+		+ cache the binary result so it may be sent back in the future
+
+*/
 func (b *CassBouncer) Run() {
 	defer func() {
 		b.conn.Close()
