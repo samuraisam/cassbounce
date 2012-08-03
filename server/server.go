@@ -4,12 +4,22 @@ import (
 	"net"
 	"log"
 	"os"
-	// "buffer"
+	"github.com/pomack/thrift4go/lib/go/src/thrift"
+	// "github.com/carloscm/gossie/src/cassandra"
 )
+
+// type CassHandler struct {
+
+// }
+
+// type 
 
 type CassBouncer struct {
 	conn net.Conn
 	cassConn *CassConnection
+	tsocket *thrift.TNonblockingSocket
+	transport *thrift.TFramedTransport
+	protocol thrift.TProtocol
 }
 
 func Listen(address string) {
@@ -27,13 +37,17 @@ func Listen(address string) {
 		}
 		log.Print("got client: ", conn)
 		go func() {
-			cassConn, err := Dial("0.0.0.0:9160", "farty", 1000)
-			if err != nil {
-				log.Print("could not connect to cassandra node: ", err)
-				conn.Close()
-				return
-			}
-			bouncer := &CassBouncer{conn, cassConn}
+			// cassConn, err := Dial("0.0.0.0:9160", "farty", 1000)
+			// if err != nil {
+			// 	log.Print("could not connect to cassandra node: ", err)
+			// 	conn.Close()
+			// 	return
+			// }
+			sock, _ := thrift.NewTNonblockingSocketConn(conn) // err is always nil, so just ignore
+			trans := thrift.NewTFramedTransport(sock)
+			protoFac := thrift.NewTBinaryProtocolFactoryDefault()
+			prot := protoFac.GetProtocol(trans)
+			bouncer := &CassBouncer{conn, nil, sock, trans, prot}
 			bouncer.Run()
 		}()
 	}
@@ -83,13 +97,23 @@ TODO
 */
 func (b *CassBouncer) Run() {
 	defer func() {
-		b.conn.Close()
-		b.cassConn.Close()
+		//b.conn.Close()
+		//b.cassConn.Close()
+		b.transport.Close()
 	}()
 
 	dead := false
 
 	for !dead {
+		// inspect the message, see if it's one we are interested in
+		name, _, _, e := b.protocol.ReadMessageBegin()
+		if e != nil {
+			log.Print("error reading from client: ", e)
+			return
+		}
+		log.Print("got name: ", name)
+		return
+
 		readBuf := make([]byte, 1024)
 		n, err := b.conn.Read(readBuf)
 		if err != nil {
