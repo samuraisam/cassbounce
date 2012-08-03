@@ -1,20 +1,20 @@
 package server
 
 import (
+	"errors"
 	"github.com/carloscm/gossie/src/cassandra"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
-	"net"
-	"errors"
 	"log"
+	"net"
 	"time"
 )
 
 type CassConnection struct {
-	socket *thrift.TNonblockingSocket
+	socket    *thrift.TNonblockingSocket
 	transport *thrift.TFramedTransport
-	client *cassandra.CassandraClient
-	node string
-	keyspace string
+	client    *cassandra.CassandraClient
+	node      string
+	keyspace  string
 }
 
 var (
@@ -54,9 +54,9 @@ func Dial(node string, keyspace string, timeout time.Duration) (*CassConnection,
 	}()
 	timedOut := false
 	select {
-		case <-time.After(time.Duration(timeout)*time.Millisecond):
-			timedOut = true
-		case <- ch:
+	case <-time.After(time.Duration(timeout) * time.Millisecond):
+		timedOut = true
+	case <-ch:
 	}
 	if timedOut {
 		return nil, ErrorConnectionTimeout

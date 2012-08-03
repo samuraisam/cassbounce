@@ -1,10 +1,10 @@
 package server
 
 import (
-	"net"
-	"log"
-	"os"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
+	"log"
+	"net"
+	"os"
 	// "github.com/carloscm/gossie/src/cassandra"
 )
 
@@ -15,11 +15,11 @@ import (
 // type 
 
 type CassBouncer struct {
-	conn net.Conn
-	cassConn *CassConnection
-	tsocket *thrift.TNonblockingSocket
+	conn      net.Conn
+	cassConn  *CassConnection
+	tsocket   *thrift.TNonblockingSocket
 	transport *thrift.TFramedTransport
-	protocol thrift.TProtocol
+	protocol  thrift.TProtocol
 }
 
 func Listen(address string) {
@@ -88,7 +88,7 @@ TODO
 	 	+ send back to the client the keyspace result
 
 	 - if a client connects and asks for a keyspace that is not yet in the pool, create one by:
-	
+
 		+ connect the socket
 		+ parse the result of the client packet and get the keyspace string
 		+ call set_keyspace with the keyspace string
