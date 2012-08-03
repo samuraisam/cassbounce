@@ -55,38 +55,42 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 	ret.Poll(true, true, time.Duration(5) * time.Second) // comb the up list to include only up nodes
 
 	if useAutodiscovery {
-		ret.NodeAutoDiscovery(time.Duration(10) * time.Second) // TODO: make configurable
+		go ret.NodeAutoDiscovery(time.Duration(10) * time.Second) // TODO: make configurable
 	}
 	return ret
 }
 
 func (l *CassandraHostList) Poll(doImmediate bool, continueUntilQuit bool, frequency time.Duration) {
 	// go through the Up and Down lists and move hosts into the right category
-	pollFinished := make(chan int)
-	readyForNextPoll := false
+	pollFinished := make(chan int, 1)
+	readyForNextPoll := true
 
 	if doImmediate {
-		l.doPoll(pollFinished)
+		go l.doPoll(pollFinished)
 		<-pollFinished
 	}
 
 	if !continueUntilQuit {
 		return // just exit if we have no directions to continue until quit
 	}
-
-	for {
-		select {
-		case <-l.shutdown:
-			log.Print("CassandraHostList:Poll sent shutdown")
-		case <-pollFinished:
-			readyForNextPoll = true // a poll finished
-		case <-time.After(frequency):
-			if readyForNextPoll {
-				// the previous poll completed after some waiting, now do the next poll
-				l.doPoll(pollFinished)
+	log.Print("CassandraHostList:Poll beginning server health checks")
+	go func() {
+		for {
+			timeouter := time.After(frequency)
+			select {
+			case <-l.shutdown:
+				log.Print("CassandraHostList:Poll sent shutdown")
+				return
+			case <- pollFinished:
+				readyForNextPoll = true
+			case <- timeouter:
+				if readyForNextPoll {
+					readyForNextPoll = false
+					go l.doPoll(pollFinished)
+				}
 			}
 		}
-	}
+	}()
 }
 
 func (l *CassandraHostList) doPoll(pollFinished chan int) {
@@ -132,7 +136,7 @@ func (l *CassandraHostList) doPoll(pollFinished chan int) {
 		case <-didComplete:
 			nComplete += 1
 			if nComplete == nTested {
-				log.Print("CassandraHostList:Poll:doPoll finished polling ", nTested, "servers")
+				log.Print("CassandraHostList:Poll:doPoll finished polling ", nTested, " servers")
 				l.updateLists(newUp, newDown) // update our alive/dead lists
 				pollFinished <- 1 // notify finished
 				return
