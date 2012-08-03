@@ -98,8 +98,8 @@ TODO
 func (b *CassBouncer) Run() {
 	defer func() {
 		//b.conn.Close()
-		//b.cassConn.Close()
 		b.transport.Close()
+		b.cassConn.Close()
 	}()
 
 	dead := false

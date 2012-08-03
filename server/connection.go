@@ -28,7 +28,7 @@ TODO:
 	- on connect: set_keyspace
 
 */
-func Dial(node string, keyspace string, timeout int) (*CassConnection, error) {
+func Dial(node string, keyspace string, timeout time.Duration) (*CassConnection, error) {
 	// resolve the address 
 	addr, err := net.ResolveTCPAddr("tcp", node)
 	if err != nil {
