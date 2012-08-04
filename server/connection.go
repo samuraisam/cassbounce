@@ -39,7 +39,7 @@ func Dial(node string, keyspace string, timeout time.Duration) (*CassConnection,
 	if err != nil {
 		return nil, err
 	}
-	sock.SetTimeout(int64(timeout) * 1e6)
+	sock.SetTimeout(int64(timeout))
 
 	// build the client
 	transport := thrift.NewTFramedTransport(sock)
@@ -54,7 +54,7 @@ func Dial(node string, keyspace string, timeout time.Duration) (*CassConnection,
 	}()
 	timedOut := false
 	select {
-	case <-time.After(time.Duration(timeout) * time.Millisecond):
+	case <-time.After(timeout):
 		timedOut = true
 	case <-ch:
 	}

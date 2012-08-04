@@ -4,16 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
-	"sort"
 )
 
 /*
- * CassandraHost ------------------------------------------------------------------------------------------
- * 
- * CassandraHost represents a single host that is reachable via thrift.
+ * Base Types -------------------------------------------------------------------------------------------
  */
+
 type Host interface {
 	Host() string
 	Port() int
@@ -21,17 +20,27 @@ type Host interface {
 	Test(timeout time.Duration) bool
 }
 
+type HostList interface {
+	Get() (Host, error)
+}
+
+/*
+ * CassandraHost ------------------------------------------------------------------------------------------
+ * 
+ * CassandraHost represents a single host that is reachable via thrift.
+ */
+
 type CassandraHost struct {
 	host string
 	port int
 }
 
 func NewCassandraHost(addr string, port int) CassandraHost {
-	return CassandraHost{addr, port};
+	return CassandraHost{addr, port}
 }
 
 func (h CassandraHost) Host() string { return h.host }
-func (h CassandraHost) Port() int { return h.port }
+func (h CassandraHost) Port() int    { return h.port }
 
 func (h CassandraHost) String() string {
 	return fmt.Sprintf("%s:%d", h.Host(), h.Port())
@@ -57,17 +66,13 @@ var (
 	NoHostsAvailableError = errors.New("No hosts are currently available.")
 )
 
-type HostList interface {
-	Get() (Host, error)
-}
-
 type CassandraHostList struct {
-	Up       map[string]CassandraHost // list of up hosts
-	Down     map[string]CassandraHost // list of down'd servers
-	available []string // list of keys in Up
-	shutdown chan int                 // global shutdown channel used to stop async services
-	mtx      sync.Mutex               // used to synchronize mutations to Up and Down
-	curIndex int                      // for round-robin balancing on Up and Down
+	Up        map[string]CassandraHost // list of up hosts
+	Down      map[string]CassandraHost // list of down'd servers
+	available []string                 // list of keys in Up
+	shutdown  chan int                 // global shutdown channel used to stop async services
+	mtx       sync.Mutex               // used to synchronize mutations to Up and Down
+	curIndex  int                      // for round-robin balancing on Up and Down
 }
 
 func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool, shutdown chan int) *CassandraHostList {
@@ -182,6 +187,7 @@ func (l *CassandraHostList) doPoll(pollFinished chan int) {
 		case <-timeouter:
 			// bail if timed out
 			log.Print("CassandraHostList:Poll:doPoll polling timed out - finished ", nTested, " of ", nComplete, " servers")
+			go l.updateLists(newUp, newDown)
 			pollFinished <- 1 // notify finished (albiet timed out)
 			return
 		case <-didComplete:
@@ -227,6 +233,7 @@ func (l *CassandraHostList) updateLists(newUp map[string]CassandraHost, newDown 
 	l.available = avail
 }
 
+// TODO: implement
 func (l *CassandraHostList) NodeAutoDiscovery(frequency time.Duration) {
 	log.Print("CassandraHostList:NodeAutoDiscovery starting up")
 	for {
