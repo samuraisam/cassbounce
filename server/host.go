@@ -68,12 +68,13 @@ var (
 )
 
 type CassandraHostList struct {
-	Up        map[string]CassandraHost // list of up hosts
-	Down      map[string]CassandraHost // list of down'd servers
-	available []string                 // list of keys in Up
-	shutdown  chan int                 // global shutdown channel used to stop async services
-	mtx       sync.Mutex               // used to synchronize mutations to Up and Down
-	curIndex  int                      // for round-robin balancing on Up and Down
+	Up             map[string]CassandraHost // list of up hosts
+	Down           map[string]CassandraHost // list of down'd servers
+	available      []string                 // list of keys in Up
+	shutdown       chan int                 // global shutdown channel used to stop async services
+	mtx            sync.Mutex               // used to synchronize mutations to Up and Down
+	curIndex       int                      // for round-robin balancing on Up and Down
+	alreadyPolling bool                     // used to keep track whether or not StartPolling was called
 }
 
 func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool, shutdown chan int) *CassandraHostList {
@@ -81,14 +82,14 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 	dwn := make(map[string]CassandraHost)
 	var mtx sync.Mutex
 	avail := make([]string, 0)
-	ret := &CassandraHostList{up, dwn, avail, shutdown, mtx, 0}
+	ret := &CassandraHostList{up, dwn, avail, shutdown, mtx, 0, false}
 
 	for _, val := range initialHostList {
 		ret.Down[val.String()] = val
 	}
 
 	// TODO: configurable whether or not to poll, poll frequency
-	ret.Poll(true, true, time.Duration(5)*time.Second) // comb the up list to include only up nodes
+	ret.StartPollingServers(true, true, time.Duration(5)*time.Second) // comb the up list to include only up nodes
 
 	if useAutodiscovery {
 		go ret.NodeAutoDiscovery(time.Duration(10) * time.Second) // TODO: make configurable
@@ -135,7 +136,11 @@ func (l *CassandraHostList) Get() (host Host, err error) {
 	return next, nil
 }
 
-func (l *CassandraHostList) Poll(doImmediate bool, continueUntilQuit bool, frequency time.Duration) {
+func (l *CassandraHostList) StartPollingServers(doImmediate bool, continueUntilQuit bool, frequency time.Duration) {
+	// no need to have multiple polling services
+	if l.alreadyPolling {
+		return
+	}
 	// go through the Up and Down lists and move hosts into the right category
 	pollFinished := make(chan int, 1)
 	readyForNextPoll := true
@@ -149,15 +154,17 @@ func (l *CassandraHostList) Poll(doImmediate bool, continueUntilQuit bool, frequ
 		return // just exit if we have no directions to continue until quit
 	}
 
+	l.alreadyPolling = true
+
 	go func() {
 		// wait `frequency` to start health checks
 		<-time.After(frequency)
-		log.Print("CassandraHostList:Poll beginning server health checks")
+		log.Print("CassandraHostList:StartPollingServers beginning server health checks")
 		for {
 			timeouter := time.After(frequency)
 			select {
 			case <-l.shutdown:
-				log.Print("CassandraHostList:Poll sent shutdown")
+				log.Print("CassandraHostList:StartPollingServers sent shutdown")
 				return
 			case <-pollFinished:
 				readyForNextPoll = true
