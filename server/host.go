@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"strings"
 )
 
 /*
@@ -82,8 +83,8 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 	avail := make([]string, 0)
 	ret := &CassandraHostList{up, dwn, avail, shutdown, mtx, 0}
 
-	for i := range initialHostList {
-		ret.Down[initialHostList[i].String()] = initialHostList[i]
+	for _, val := range initialHostList {
+		ret.Down[val.String()] = val
 	}
 
 	// TODO: configurable whether or not to poll, poll frequency
@@ -93,6 +94,24 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 		go ret.NodeAutoDiscovery(time.Duration(10) * time.Second) // TODO: make configurable
 	}
 	return ret
+}
+
+// for easy stringification
+func (l *CassandraHostList) String() string {
+	tmpl := "CassandraHostList ServersUp: [%s] ServersDown: [%s]"
+	up := make([]string, len(l.Up))
+	down := make([]string, len(l.Down))
+	i := 0
+	for u, _ := range l.Up {
+		up[i] = fmt.Sprintf("%s", u)
+		i++
+	}
+	i = 0
+	for d, _ := range l.Down {
+		down[i] = fmt.Sprintf("%s", d)
+		i++
+	}
+	return fmt.Sprintf(tmpl, strings.Join(up, ", "), strings.Join(down, ", "))
 }
 
 // to satisfy HostList.Get()
@@ -123,14 +142,17 @@ func (l *CassandraHostList) Poll(doImmediate bool, continueUntilQuit bool, frequ
 
 	if doImmediate {
 		go l.doPoll(pollFinished)
-		<-pollFinished
+		<-pollFinished // block for an immedaite poll
 	}
 
 	if !continueUntilQuit {
 		return // just exit if we have no directions to continue until quit
 	}
-	log.Print("CassandraHostList:Poll beginning server health checks")
+
 	go func() {
+		// wait `frequency` to start health checks
+		<-time.After(frequency)
+		log.Print("CassandraHostList:Poll beginning server health checks")
 		for {
 			timeouter := time.After(frequency)
 			select {
@@ -149,34 +171,31 @@ func (l *CassandraHostList) Poll(doImmediate bool, continueUntilQuit bool, frequ
 	}()
 }
 
+func doTest(host CassandraHost, didComplete chan int, wasUp bool, newUp map[string]CassandraHost, newDown map[string]CassandraHost) {
+	defer func() { didComplete <- 1 }() // notify of complete when done
+	ok := host.Test(time.Duration(1) * time.Second) // test if the host is up9
+	if wasUp && !ok {
+		newDown[host.String()] = host // it was previously up, but iw no more :( - add it to down
+	} else if !wasUp && ok {
+		newUp[host.String()] = host // it was previously down, but is now up! - add it to up
+	}
+}
+
 func (l *CassandraHostList) doPoll(pollFinished chan int) {
 	log.Print("CassandraHostList:Poll:doPoll starting poll")
 	nTested := 0
 	didComplete := make(chan int)
 	newDown := make(map[string]CassandraHost)
+	newUp := make(map[string]CassandraHost)
 	// test all the connetions in Up
-	for s, host := range l.Up {
+	for _, host := range l.Up {
 		nTested += 1
-		go func() {
-			defer func() { didComplete <- 1 }() // notify of completion when done
-			// test asynchronously whether or not this is available
-			ok := host.Test(time.Duration(1) * time.Second) // TODO: configurable poll instance timeout
-			if !ok {
-				newDown[s] = host // it was previously up, but no more :( - add it to Down
-			}
-		}()
+		go doTest(host, didComplete, true, newUp, newDown)
 	}
 	// test all the connections in Down
-	newUp := make(map[string]CassandraHost)
-	for s, host := range l.Down {
+	for _, host := range l.Down {
 		nTested += 1
-		go func() {
-			defer func() { didComplete <- 1 }()             // notify of completion when done
-			ok := host.Test(time.Duration(1) * time.Second) // TODO: configurable poll instance timeout
-			if ok {
-				newUp[s] = host // it was previously down, but no more!, add it to Up
-			}
-		}()
+		go doTest(host, didComplete, false, newUp, newDown)
 	}
 	// TODO: configure poll list timeout
 	timeouter := time.After(time.Duration(10) * time.Second) // wait N seconds for all polls to finish
