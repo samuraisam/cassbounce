@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type Connection interface {
+	Write(buf []byte) (nwritten int, err error)
+	Read(buf []byte) (nread int, err error)
+	Close() (err error)
+}
+
 type CassConnection struct {
 	socket    *thrift.TNonblockingSocket
 	transport *thrift.TFramedTransport
