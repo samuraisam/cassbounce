@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
-	"strings"
 )
 
 /*
@@ -98,7 +98,7 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 
 // for easy stringification
 func (l *CassandraHostList) String() string {
-	tmpl := "CassandraHostList ServersUp: [%s] ServersDown: [%s]"
+	tmpl := "<CassandraHostList ServersUp: [%s] ServersDown: [%s]>"
 	up := make([]string, len(l.Up))
 	down := make([]string, len(l.Down))
 	i := 0
@@ -172,10 +172,10 @@ func (l *CassandraHostList) Poll(doImmediate bool, continueUntilQuit bool, frequ
 }
 
 func doTest(host CassandraHost, didComplete chan int, wasUp bool, newUp map[string]CassandraHost, newDown map[string]CassandraHost) {
-	defer func() { didComplete <- 1 }() // notify of complete when done
+	defer func() { didComplete <- 1 }()             // notify of complete when done
 	ok := host.Test(time.Duration(1) * time.Second) // test if the host is up9
 	if wasUp && !ok {
-		newDown[host.String()] = host // it was previously up, but iw no more :( - add it to down
+		newDown[host.String()] = host // it was previously up, but is no more :( - add it to down
 	} else if !wasUp && ok {
 		newUp[host.String()] = host // it was previously down, but is now up! - add it to up
 	}
