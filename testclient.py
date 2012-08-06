@@ -2,7 +2,7 @@ import time
 import pycassa
 
 
-pool = pycassa.ConnectionPool('cassbounce', server_list=['0.0.0.0:9216'])
+pool = pycassa.ConnectionPool('cassbounce', server_list=['0.0.0.0:9666'])
 # pool = pycassa.ConnectionPool('cassbounce', server_list=['0.0.0.0:9160'])
 pool.fill()
 

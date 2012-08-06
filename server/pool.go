@@ -1,8 +1,8 @@
 package server
 
-import (
-	"time"
-)
+// import (
+// 	"time"
+// )
 
 /*
 The pool - the design of this is as follows
@@ -84,7 +84,7 @@ type Pool interface {
 
 	// DoParalell(ex []Execution) ([]Result, []Error) // do a series of thrift commands in paralell on any conneciton
 
-	Do(ex []Execution, timeout time.Duration) (Result, error)
+	// Do(ex []Execution, timeout time.Duration) (Result, error)
 
 	// relinquish the use of a connection
 	// Put(conn Connection)
@@ -97,7 +97,7 @@ type Pool interface {
 }
 
 /*
- * PoolManager - a mapping of hostName$u=>Pool
+ * PoolManager - a mapping of hostName(and optionally username/password) => Pool
  */
 type PoolManager interface {
 	// return a Pool at random for any known keyspace
@@ -108,4 +108,25 @@ type PoolManager interface {
 
 	// return a Pool for a specific keyspace
 	Get(host Host, keyspace string) (Pool, error)
+}
+
+
+type SimplePoolManager struct {
+	// a pool manager for the simpler days
+}
+
+func NewSimplePoolManager() *SimplePoolManager {
+	return &SimplePoolManager{}
+}
+
+func (pm *SimplePoolManager) GetAny(host Host) (Pool, error) {
+	return nil, nil
+}
+
+func (pm *SimplePoolManager) GetLoggedIn(host Host, keyspace string, creds LoginReq) (Pool, error) {
+	return nil, nil
+}
+
+func (pm *SimplePoolManager) Get(host Host, keyspace string) (Pool, error) {
+	return nil, nil
 }

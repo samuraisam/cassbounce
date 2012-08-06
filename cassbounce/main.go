@@ -9,9 +9,14 @@ import (
 	"strconv"
 )
 
+const (
+	DEFAULT_PORT = 9160
+)
+
 var (
 	initialServerList = flag.String("initial-servers", "0.0.0.0:9160", "A list of cassandra nodes to connect to initially.")
 	nodeAutodiscovery = flag.Bool("node-autodiscovery", false, "Whether or not to introspect the ring to discover new nodes")
+	listenAddress = flag.String("listen-address", "0.0.0.0:9666", "What interface to listen on.")
 )
 
 func parseInitialServerList(s string) []server.CassandraHost {
@@ -21,8 +26,8 @@ func parseInitialServerList(s string) []server.CassandraHost {
 		parts := strings.Split(el, ":")
 		port := 0
 		var err error
-		if len(parts) == 1 { // no port was specified
-			port = 9160
+		if len(parts) == 1 { // no port was specified, default = 9160
+			port = DEFAULT_PORT
 		} else if len(parts) == 2 {
 			port, err = strconv.Atoi(parts[1])
 			if err != nil {
@@ -39,14 +44,33 @@ func parseInitialServerList(s string) []server.CassandraHost {
 }
 
 func main() {
-	shutdown := make(chan int)
-
 	flag.Parse()
 
+	// global shutdown signal - a number is sent over when services should shut down
+	shutdown := make(chan int)
+
+	// host list set up
 	initial := parseInitialServerList(*initialServerList)
-	hostList := server.NewCassandraHostList(initial, *nodeAutodiscovery, shutdown)
+	// this will block until at least one successful connection can be established
+	outboundHostList := server.NewCassandraHostList(initial, *nodeAutodiscovery, shutdown)
 
-	log.Print("Host list ", hostList)
+	// settings
+	settings := server.NewAppSettings()
+	// settings.InitialServerList = initial
+	settings.NodeAutodiscovery = *nodeAutodiscovery
+	settings.ListenAddress = *listenAddress
 
-	server.Listen("0.0.0.0:9216")
+	// global app
+	app := server.GetApp()
+	app.ShutdownChan = shutdown
+	app.SetSettings(settings)
+	app.SetHostList(outboundHostList)
+
+	// listen forever
+	err := app.Listen()
+
+	if err != nil {
+		log.Fatal("Could not listen on interface: ", app.Settings().ListenAddress, " error: ", err)
+		os.Exit(1)
+	}
 }

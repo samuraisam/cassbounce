@@ -1,57 +1,142 @@
 package server
 
 import (
-	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"log"
 	"net"
-	"os"
-	// "github.com/carloscm/gossie/src/cassandra"
 )
 
-// type CassHandler struct {
+/*
+ * AppSettings - global configuration
+ */
 
-// }
-
-// type 
-
-type CassBouncer struct {
-	conn      net.Conn
-	cassConn  *CassConnection
-	tsocket   *thrift.TNonblockingSocket
-	transport *thrift.TFramedTransport
-	protocol  thrift.TProtocol
+type AppSettings struct {
+	InitialServerList []Host // list of hosts that was passed into the command line
+	NodeAutodiscovery bool // whether or not to set the HostList to autodiscover
+	ListenAddress string // what interface to listen for new clients on
+	ReceiverType string // what receiver to use (for now, must only be "command")
+	PoolManagerType string // what pool manager to use (for now, must only be "simple")
 }
 
-func Listen(address string) {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		log.Fatal("error listening: ", err)
-		os.Exit(1)
+func NewAppSettings() *AppSettings {
+	return &AppSettings{
+		ReceiverType: "command", 
+		PoolManagerType: "simple",
+		NodeAutodiscovery: false,
+		ListenAddress: "0.0.0.0:9160",
 	}
-	log.Print("listening on ", address)
+}
+
+/*
+ * App - the global app object
+ *
+ * Listens for new clients and holds global state
+ *
+ * Also manages stat collection (to be implemented)
+ */
+
+type App struct {
+	hostList HostList // host list service - manages a list of up/down outbound servers
+	settings *AppSettings // global settings used throughout the app
+	ShutdownChan chan int // channel used when we want to shut down services
+	poolMan PoolManager // pool manager service - manages a list outbound connection pools
+}
+
+// the global app object
+var currentApp *App
+
+func GetApp() *App {
+	// app is a singleton, meaning we can only have one instance
+	if currentApp != nil {
+		// app was already created, return that one
+		return currentApp
+	}
+	// create a new one since it didn't exist already
+	currentApp = &App{}
+	return currentApp
+}
+
+ // TODO: this could respond to some environmental change
+func (a *App) SetSettings(s *AppSettings) { a.settings = s }
+func (a *App) Settings() *AppSettings { return a.settings }
+
+func (a *App) SetHostList(h HostList) { a.hostList = h }
+func (a *App) HostList() HostList { return a.hostList }
+
+func (a *App) poolManager() PoolManager { // lazily load a PoolManager
+	if a.poolMan == nil {
+		switch a.settings.PoolManagerType {
+		case "simple":
+		default:
+			a.poolMan = NewSimplePoolManager()
+		}
+	}
+	return a.poolMan
+}
+
+// listen forever on the interface a.ListenAddress
+func (a *App) Listen() error {
+	listener, err := net.Listen("tcp", a.settings.ListenAddress)
+	if err != nil {
+		return err
+	}
+	log.Print("App:Listen now accepting connections on interface: ", a.settings.ListenAddress)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Print("error accepting: ", err)
-			return
+			log.Print("App:Listen error accepting connection: ", err)
+			continue
 		}
-		log.Print("got client: ", conn)
-		go func() {
-			// cassConn, err := Dial("0.0.0.0:9160", "farty", 1000)
-			// if err != nil {
-			// 	log.Print("could not connect to cassandra node: ", err)
-			// 	conn.Close()
-			// 	return
-			// }
-			sock, _ := thrift.NewTNonblockingSocketConn(conn) // err is always nil, so just ignore
-			trans := thrift.NewTFramedTransport(sock)
-			protoFac := thrift.NewTBinaryProtocolFactoryDefault()
-			prot := protoFac.GetProtocol(trans)
-			bouncer := &CassBouncer{conn, nil, sock, trans, prot}
-			bouncer.Run()
-		}()
+		// create a receiver for this connection
+		var receiver Receiver
+		rtype := a.settings.ReceiverType
+
+		if rtype == "command" {
+			receiver = NewCommandReceiver(conn, a.hostList, a.poolManager())
+		}
+
+		go receiver.Receive()
 	}
+	return nil
 }
+
+// type CassBouncer struct {
+// 	conn      net.Conn
+// 	cassConn  *CassConnection
+// 	tsocket   *thrift.TNonblockingSocket
+// 	transport *thrift.TFramedTransport
+// 	protocol  thrift.TProtocol
+// }
+
+// func Listen(address string) {
+// 	listener, err := net.Listen("tcp", address)
+// 	if err != nil {
+// 		log.Fatal("error listening: ", err)
+// 		os.Exit(1)
+// 	}
+// 	log.Print("listening on ", address)
+// 	for {
+// 		conn, err := listener.Accept()
+// 		if err != nil {
+// 			log.Print("error accepting: ", err)
+// 			return
+// 		}
+// 		log.Print("got client: ", conn)
+// 		go func() {
+// 			// cassConn, err := Dial("0.0.0.0:9160", "farty", 1000)
+// 			// if err != nil {
+// 			// 	log.Print("could not connect to cassandra node: ", err)
+// 			// 	conn.Close()
+// 			// 	return
+// 			// }
+// 			sock, _ := thrift.NewTNonblockingSocketConn(conn) // err is always nil, so just ignore
+// 			trans := thrift.NewTFramedTransport(sock)
+// 			protoFac := thrift.NewTBinaryProtocolFactoryDefault()
+// 			prot := protoFac.GetProtocol(trans)
+// 			bouncer := &CassBouncer{conn, nil, sock, trans, prot}
+// 			bouncer.Run()
+// 		}()
+// 	}
+// }
 
 /*
 The goal of this thing is to offer a connection pooler for cassandra
@@ -95,55 +180,55 @@ TODO
 		+ cache the binary result so it may be sent back in the future
 
 */
-func (b *CassBouncer) Run() {
-	defer func() {
-		//b.conn.Close()
-		b.transport.Close()
-		b.cassConn.Close()
-	}()
+// func (b *CassBouncer) Run() {
+// 	defer func() {
+// 		//b.conn.Close()
+// 		b.transport.Close()
+// 		b.cassConn.Close()
+// 	}()
 
-	dead := false
+// 	dead := false
 
-	for !dead {
-		// inspect the message, see if it's one we are interested in
-		name, _, _, e := b.protocol.ReadMessageBegin()
-		if e != nil {
-			log.Print("error reading from client: ", e)
-			return
-		}
-		log.Print("got name: ", name)
-		return
+// 	for !dead {
+// 		// inspect the message, see if it's one we are interested in
+// 		name, _, _, e := b.protocol.ReadMessageBegin()
+// 		if e != nil {
+// 			log.Print("error reading from client: ", e)
+// 			return
+// 		}
+// 		log.Print("got name: ", name)
+// 		return
 
-		readBuf := make([]byte, 1024)
-		n, err := b.conn.Read(readBuf)
-		if err != nil {
-			log.Print("error reading from client: ", err)
-			return
-		}
-		log.Print("received ", n, " bytes of data")
+// 		readBuf := make([]byte, 1024)
+// 		n, err := b.conn.Read(readBuf)
+// 		if err != nil {
+// 			log.Print("error reading from client: ", err)
+// 			return
+// 		}
+// 		log.Print("received ", n, " bytes of data")
 
-		// var packet Buffer
-		// packet.Write()
+// 		// var packet Buffer
+// 		// packet.Write()
 
-		n, cassWriteErr := b.cassConn.Write(readBuf[:n])
-		if cassWriteErr != nil {
-			log.Print("error writing to cassandra: ", cassWriteErr)
-			return
-		}
-		log.Print("wrote ", n, " bytes of data to cassandra")
+// 		n, cassWriteErr := b.cassConn.Write(readBuf[:n])
+// 		if cassWriteErr != nil {
+// 			log.Print("error writing to cassandra: ", cassWriteErr)
+// 			return
+// 		}
+// 		log.Print("wrote ", n, " bytes of data to cassandra")
 
-		cassReadBuf := make([]byte, 1024)
-		n, cassReadErr := b.cassConn.Read(cassReadBuf)
-		if cassReadErr != nil {
-			log.Print("error reading from cassandra: ", cassReadErr)
-			return
-		}
-		log.Print("read ", n, " bytes from cassandra")
+// 		cassReadBuf := make([]byte, 1024)
+// 		n, cassReadErr := b.cassConn.Read(cassReadBuf)
+// 		if cassReadErr != nil {
+// 			log.Print("error reading from cassandra: ", cassReadErr)
+// 			return
+// 		}
+// 		log.Print("read ", n, " bytes from cassandra")
 
-		n, clientWriteErr := b.conn.Write(cassReadBuf[:n])
-		if clientWriteErr != nil {
-			log.Print("error sending reply: ", clientWriteErr)
-		}
-		log.Print("wrote ", n, " bytes of data")
-	}
-}
+// 		n, clientWriteErr := b.conn.Write(cassReadBuf[:n])
+// 		if clientWriteErr != nil {
+// 			log.Print("error sending reply: ", clientWriteErr)
+// 		}
+// 		log.Print("wrote ", n, " bytes of data")
+// 	}
+// }
