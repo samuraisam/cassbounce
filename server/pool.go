@@ -27,6 +27,42 @@ open until the end of the request, at which point the connection will be severed
 	4. inbound connection will relinquish its use of the outbound connection
 		4a. if the pool is already full, the connection is severed - in that vein, the pool size should be as large
 		as is needed to satisfy any inbound connections including spikes.
+
+
+LAYER 1: LISTENER
+Inbound connecion comes in on a chan `inboundConnection` and wrapped in a `ClientConnection` which has all the necessary context set up.
+
+LAYER 2: RECEIVER
+The Receiver wraps the `ClientConnection` and immediately starts receiving data from it, deciding which action to take.
+	-> Is it a `set_keyspace` and shall be paired with a connection?
+	-> Continuing to read, is the next command a `login`
+After the client is no longer running `set_keyspace` or `login` - which must occur in that order, ask the `PoolManager` for a `Pool` that is set up with those credentials.
+Once the `PoolManager` returns a `Pool` - we are ready to use it.(creds).
+
+LAYER 3: EXECUTOR
+An Executor wraps a Receiver and continually calls `Recv() (Execution, error)`
+
+basically: (in the executor loop)
+
+	select {
+
+	case cmd := <-self.receiver.CmdC: // got a Command, DOO IT
+		pm := GetPoolManger(self.keyspace, self.creds) // creds may be nil
+		go pm.Do(cmd, self.RespC) // may block if it has to connect or something
+
+	case resp := <-self.RespC: // got a Response, which has a Command and the bytes to respond with
+		go self.receiver.SendResp(resp, self.ErrC) // send, collect error
+
+	case err := <-self.ErrC: // got an error, wich has a Command and an error of some sort
+		go self.rece.ver.SendErr(er)
+	
+	}
+
+An executors loop basically selects on the receiver (to get data) and the Executions it sends (to get data to send back)
+It will also report statistics through a `chan Stats`
+
+	-> It will receive data and interpret the beginning and end of each command. Eg `get` or `get_range_slices` or `get_many`
+	-> Wrap each command in an `Execution` and call `PoolManager.Get(creds).Do(Execution)` which returns a `chan Result`
 */
 
 /*
@@ -44,12 +80,14 @@ type LoginReq interface {
  */
 type Pool interface {
 	// get a Connection for use
-	Get(timeout time.Duration) (Connection, error)
+	// Get(timeout time.Duration) (Connection, error)
 
 	// DoParalell(ex []Execution) ([]Result, []Error) // do a series of thrift commands in paralell on any conneciton
 
+	Do(ex []Execution, timeout time.Duration) (Result, error)
+
 	// relinquish the use of a connection
-	Put(conn Connection)
+	// Put(conn Connection)
 
 	Keyspace() string // the keyspace that is defined (can be nil, if performing some system_* operations)
 
@@ -59,7 +97,7 @@ type Pool interface {
 }
 
 /*
- * PoolManager - a mapping of hostName=>Pool
+ * PoolManager - a mapping of hostName$u=>Pool
  */
 type PoolManager interface {
 	// return a Pool at random for any known keyspace
