@@ -11,18 +11,18 @@ import (
 
 type AppSettings struct {
 	InitialServerList []Host // list of hosts that was passed into the command line
-	NodeAutodiscovery bool // whether or not to set the HostList to autodiscover
-	ListenAddress string // what interface to listen for new clients on
-	ReceiverType string // what receiver to use (for now, must only be "command")
-	PoolManagerType string // what pool manager to use (for now, must only be "simple")
+	NodeAutodiscovery bool   // whether or not to set the HostList to autodiscover
+	ListenAddress     string // what interface to listen for new clients on
+	ReceiverType      string // what receiver to use (for now, must only be "command")
+	PoolManagerType   string // what pool manager to use (for now, must only be "simple")
 }
 
 func NewAppSettings() *AppSettings {
 	return &AppSettings{
-		ReceiverType: "command", 
-		PoolManagerType: "simple",
+		ReceiverType:      "command",
+		PoolManagerType:   "simple",
 		NodeAutodiscovery: false,
-		ListenAddress: "0.0.0.0:9160",
+		ListenAddress:     "0.0.0.0:9160",
 	}
 }
 
@@ -35,10 +35,10 @@ func NewAppSettings() *AppSettings {
  */
 
 type App struct {
-	hostList HostList // host list service - manages a list of up/down outbound servers
-	settings *AppSettings // global settings used throughout the app
-	ShutdownChan chan int // channel used when we want to shut down services
-	poolMan PoolManager // pool manager service - manages a list outbound connection pools
+	hostList     HostList     // host list service - manages a list of up/down outbound servers
+	settings     *AppSettings // global settings used throughout the app
+	ShutdownChan chan int     // channel used when we want to shut down services
+	poolMan      PoolManager  // pool manager service - manages a list outbound connection pools
 }
 
 // the global app object
@@ -55,12 +55,12 @@ func GetApp() *App {
 	return currentApp
 }
 
- // TODO: this could respond to some environmental change
+// TODO: this could respond to some environmental change
 func (a *App) SetSettings(s *AppSettings) { a.settings = s }
-func (a *App) Settings() *AppSettings { return a.settings }
+func (a *App) Settings() *AppSettings     { return a.settings }
 
 func (a *App) SetHostList(h HostList) { a.hostList = h }
-func (a *App) HostList() HostList { return a.hostList }
+func (a *App) HostList() HostList     { return a.hostList }
 
 func (a *App) poolManager() PoolManager { // lazily load a PoolManager
 	if a.poolMan == nil {

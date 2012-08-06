@@ -55,7 +55,7 @@ basically: (in the executor loop)
 
 	case err := <-self.ErrC: // got an error, wich has a Command and an error of some sort
 		go self.rece.ver.SendErr(er)
-	
+
 	}
 
 An executors loop basically selects on the receiver (to get data) and the Executions it sends (to get data to send back)
@@ -109,7 +109,6 @@ type PoolManager interface {
 	// return a Pool for a specific keyspace
 	Get(host Host, keyspace string) (Pool, error)
 }
-
 
 type SimplePoolManager struct {
 	// a pool manager for the simpler days

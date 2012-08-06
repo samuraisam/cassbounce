@@ -2,11 +2,11 @@ package main
 
 import (
 	"cassbounce/server"
-	"log"
 	"flag"
-	"strings"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 var (
 	initialServerList = flag.String("initial-servers", "0.0.0.0:9160", "A list of cassandra nodes to connect to initially.")
 	nodeAutodiscovery = flag.Bool("node-autodiscovery", false, "Whether or not to introspect the ring to discover new nodes")
-	listenAddress = flag.String("listen-address", "0.0.0.0:9666", "What interface to listen on.")
+	listenAddress     = flag.String("listen-address", "0.0.0.0:9666", "What interface to listen on.")
 )
 
 func parseInitialServerList(s string) []server.CassandraHost {

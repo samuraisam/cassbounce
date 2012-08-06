@@ -1,9 +1,9 @@
 package server
 
 import (
-	"net"
-	"log"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
+	"log"
+	"net"
 )
 
 type Receiver interface {
@@ -12,11 +12,11 @@ type Receiver interface {
 
 type CommandReceiver struct {
 	remoteConn net.Conn
-	hostList HostList
-	poolMan PoolManager
-	tsocket *thrift.TNonblockingSocket
-	transport *thrift.TFramedTransport
-	protocol thrift.TProtocol
+	hostList   HostList
+	poolMan    PoolManager
+	tsocket    *thrift.TNonblockingSocket
+	transport  *thrift.TFramedTransport
+	protocol   thrift.TProtocol
 }
 
 func NewCommandReceiver(conn net.Conn, hostList HostList, poolMan PoolManager) *CommandReceiver {
