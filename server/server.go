@@ -10,19 +10,21 @@ import (
  */
 
 type AppSettings struct {
-	InitialServerList []Host // list of hosts that was passed into the command line
-	NodeAutodiscovery bool   // whether or not to set the HostList to autodiscover
-	ListenAddress     string // what interface to listen for new clients on
-	ReceiverType      string // what receiver to use (for now, must only be "command")
-	PoolManagerType   string // what pool manager to use (for now, must only be "simple")
+	InitialServerList  []Host // list of hosts that was passed into the command line
+	NodeAutodiscovery  bool   // whether or not to set the HostList to autodiscover
+	ListenAddress      string // what interface to listen for new clients on
+	ReceiverType       string // what receiver to use (for now, must only be "command")
+	PoolManagerType    string // what pool manager to use (for now, must only be "simple")
+	PollServersForever bool   // whether or not to constantly perform health checks on remote hosts
 }
 
 func NewAppSettings() *AppSettings {
 	return &AppSettings{
-		ReceiverType:      "command",
-		PoolManagerType:   "simple",
-		NodeAutodiscovery: false,
-		ListenAddress:     "0.0.0.0:9160",
+		ReceiverType:       "command",
+		PoolManagerType:    "simple",
+		NodeAutodiscovery:  false,
+		ListenAddress:      "0.0.0.0:9160",
+		PollServersForever: false,
 	}
 }
 

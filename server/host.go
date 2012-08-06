@@ -89,7 +89,8 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 	}
 
 	// TODO: configurable whether or not to poll, poll frequency
-	ret.StartPollingServers(true, true, time.Duration(5)*time.Second) // comb the up list to include only up nodes
+	pollForever := GetApp().Settings().PollServersForever
+	ret.StartPollingServers(true, pollForever, time.Duration(5)*time.Second) // comb the up list to include only up nodes
 
 	if useAutodiscovery {
 		go ret.NodeAutoDiscovery(time.Duration(10) * time.Second) // TODO: make configurable

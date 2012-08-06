@@ -55,19 +55,40 @@ func (r *CommandReceiver) Receive() {
 	// log.Print("XXX: got name: ", name)
 	// return
 
-	// set up the passthrough processor
-	pt := &CassandraPassthrough{}
-	proc := cassandra.NewCassandraProcessor(pt)
+	defer func() { r.remoteConn.Close() }()
 
-	// output stubbing
-	protFac := thrift.NewTBinaryProtocolFactoryDefault()
-	var tbuf bytes.Buffer
-	trans := PassthroughTransport{tbuf}
-	oprot := protFac.GetProtocol(&trans)
+	dead := false
 
-	_, exc := proc.Process(r.protocol, oprot)
-	if exc != nil {
-		log.Print("XXX: Shit! ", exc)
+	for !dead {
+		// set up the passthrough processor
+		pt := &CassandraPassthrough{}
+		proc := cassandra.NewCassandraProcessor(pt)
+
+		// output stubbing
+		// protFac := thrift.NewTBinaryProtocolFactoryDefault()
+		// var tbuf bytes.Buffer
+		// trans := PassthroughTransport{tbuf}
+		// oprot := protFac.GetProtocol(&trans)
+
+		_, exc := proc.Process(r.protocol, r.protocol)
+		if exc != nil {
+			log.Print("XXX: Shit! ", exc)
+			dead = true
+			continue
+		}
+
+		// obuf := make([]byte, 1024)
+		// l, _ := trans.Read(obuf)
+
+		// // log.Print("XXX: writing ", l, " ", err, " ", string(obuf))
+
+		// ll, eerr := r.remoteConn.Write(obuf[:l])
+		// log.Print("XXX: writing ", ll, " bytes: ", eerr)
+
+		// if eerr != nil {
+		// 	// prolly a disconnect
+		// 	dead = true
+		// }
 	}
 }
 
@@ -78,20 +99,35 @@ type PassthroughTransport struct {
 	buffer bytes.Buffer
 }
 
-func (t *PassthroughTransport) IsOpen() bool                    { return true }
-func (t *PassthroughTransport) Open() error                     { return nil }
-func (t *PassthroughTransport) Close() error                    { return nil }
-func (t *PassthroughTransport) ReadAll(buf []byte) (int, error) { return t.buffer.Read(buf) }
-func (t *PassthroughTransport) Read(buf []byte) (int, error)    { return t.buffer.Read(buf) }
-func (t *PassthroughTransport) Write(buf []byte) (int, error)   { return t.buffer.Write(buf) }
-func (t *PassthroughTransport) Flush() error                    { return nil }
-func (t *PassthroughTransport) Peek() bool                      { return false }
+func (t *PassthroughTransport) IsOpen() bool { return true }
+func (t *PassthroughTransport) Open() error  { return nil }
+func (t *PassthroughTransport) Close() error { return nil }
+func (t *PassthroughTransport) ReadAll(buf []byte) (int, error) {
+	return t.Read(buf)
+}
+func (t *PassthroughTransport) Read(buf []byte) (int, error) {
+	// log.Print("reading ")
+	return t.buffer.Read(buf)
+}
+func (t *PassthroughTransport) Write(buf []byte) (int, error) {
+	// log.Print("writing ", string(buf))
+	return t.buffer.Write(buf)
+}
+func (t *PassthroughTransport) Flush() error { return nil }
+func (t *PassthroughTransport) Peek() bool   { return false }
 
-type CassandraPassthrough struct { // implements "ICassandra"
-
+/*
+ * CassandraPassthrough
+ *
+ * Implements `ICassandra` so we may hijack some communications with the backend servers
+ */
+type CassandraPassthrough struct {
 }
 
 func (c *CassandraPassthrough) Login(auth_request *cassandra.AuthenticationRequest) (authnx *cassandra.AuthenticationException, authzx *cassandra.AuthorizationException, err error) {
+	k1, _ := auth_request.Credentials.Get("username")
+	k2, _ := auth_request.Credentials.Get("password")
+	log.Print("CassandraPassthrough:Login ", auth_request.Credentials, " ", k1, " ", k2)
 	return nil, nil, nil
 }
 

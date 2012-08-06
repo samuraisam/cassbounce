@@ -17,6 +17,7 @@ var (
 	initialServerList = flag.String("initial-servers", "0.0.0.0:9160", "A list of cassandra nodes to connect to initially.")
 	nodeAutodiscovery = flag.Bool("node-autodiscovery", false, "Whether or not to introspect the ring to discover new nodes")
 	listenAddress     = flag.String("listen-address", "0.0.0.0:9666", "What interface to listen on.")
+	pollServers       = flag.Bool("perform-health-checks", false, "Whether or not to perform health checks on remote hosts")
 )
 
 func parseInitialServerList(s string) []server.CassandraHost {
@@ -49,21 +50,22 @@ func main() {
 	// global shutdown signal - a number is sent over when services should shut down
 	shutdown := make(chan int)
 
-	// host list set up
-	initial := parseInitialServerList(*initialServerList)
-	// this will block until at least one successful connection can be established
-	outboundHostList := server.NewCassandraHostList(initial, *nodeAutodiscovery, shutdown)
-
 	// settings
 	settings := server.NewAppSettings()
 	// settings.InitialServerList = initial
 	settings.NodeAutodiscovery = *nodeAutodiscovery
 	settings.ListenAddress = *listenAddress
+	settings.PollServersForever = *pollServers
 
 	// global app
 	app := server.GetApp()
 	app.ShutdownChan = shutdown
 	app.SetSettings(settings)
+
+	// host list set up (this must happen after the global app object is set up)
+	initial := parseInitialServerList(*initialServerList)
+	// this will block until at least one successful connection can be established
+	outboundHostList := server.NewCassandraHostList(initial, *nodeAutodiscovery, shutdown)
 	app.SetHostList(outboundHostList)
 
 	// listen forever
