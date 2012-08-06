@@ -6,6 +6,7 @@ import (
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"log"
 	"net"
+	"time"
 )
 
 type Receiver interface {
@@ -60,19 +61,58 @@ func (r *CommandReceiver) Receive() {
 	dead := false
 
 	for !dead {
-		// set up the passthrough processor
-		pt := &CassandraPassthrough{}
-		proc := cassandra.NewCassandraProcessor(pt)
-
 		// output stubbing
 		// protFac := thrift.NewTBinaryProtocolFactoryDefault()
 		// var tbuf bytes.Buffer
 		// trans := PassthroughTransport{tbuf}
 		// oprot := protFac.GetProtocol(&trans)
 
-		_, exc := proc.Process(r.protocol, r.protocol)
+		destinationHost, err := r.hostList.Get()
+		if err != nil {
+			log.Print("XXX: error getting outbound host: ", err)
+			return
+		}
+		outboundConn, err := Dial(destinationHost.String(), "fart", time.Duration(100)*time.Millisecond)
+		if err != nil {
+			log.Print("XXX: Error establishing outbound connection: ", err)
+			return
+		}
+
+		// read the header - this basically does the exact same thing as proc.Process(in_prot, out_prot)
+		name, _, seqId, err := r.protocol.ReadMessageBegin()
+		if err != nil {
+			log.Print("CommandReceiver:Receiver could not read from client ", err)
+			dead = true
+			continue
+		}
+
+		// if name == "set_keyspace" {
+		// 	// intercept set_keyspace and call it ourselves (just for now, the pool will do this later...)
+		// 	outboundConn.
+		// }
+
+		// set up the passthrough processor
+		pt := &CassandraPassthrough{outboundConn}
+		proc := cassandra.NewCassandraProcessor(pt)
+
+		processor, nameFound := proc.GetProcessorFunction(name) // get a processor for the name
+
+		if !nameFound || processor == nil {
+			// have no idea what you are tryn'a do son
+			r.protocol.Skip(thrift.STRUCT)
+			r.protocol.ReadMessageEnd()
+			exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function " + name)
+			r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
+			exc.Write(r.protocol)
+			r.protocol.WriteMessageEnd()
+			r.protocol.Transport().Flush()
+			dead = true
+			continue
+		}
+
+		_, exc := processor.Process(seqId, r.protocol, r.protocol)
 		if exc != nil {
-			log.Print("XXX: Shit! ", exc)
+			log.Print("CommandReceiver:Receiver failed to execute function '", name, "': ", exc)
 			dead = true
 			continue
 		}
@@ -120,20 +160,23 @@ func (t *PassthroughTransport) Peek() bool   { return false }
  * CassandraPassthrough
  *
  * Implements `ICassandra` so we may hijack some communications with the backend servers
+ *
+ * Most things are not implemented
  */
 type CassandraPassthrough struct {
+	conn *CassConnection
 }
 
 func (c *CassandraPassthrough) Login(auth_request *cassandra.AuthenticationRequest) (authnx *cassandra.AuthenticationException, authzx *cassandra.AuthorizationException, err error) {
 	k1, _ := auth_request.Credentials.Get("username")
 	k2, _ := auth_request.Credentials.Get("password")
-	log.Print("CassandraPassthrough:Login ", auth_request.Credentials, " ", k1, " ", k2)
-	return nil, nil, nil
+	log.Print("CassandraPassthrough:Login  username=", k1, " password=", k2)
+	return c.conn.client.Login(auth_request)
 }
 
 func (c *CassandraPassthrough) SetKeyspace(keyspace string) (ire *cassandra.InvalidRequestException, err error) {
 	log.Print("CassandraPassthrough:SetKeyspace ks=", keyspace)
-	return nil, nil
+	return c.conn.client.SetKeyspace(keyspace)
 }
 
 func (c *CassandraPassthrough) Get(key []byte, column_path *cassandra.ColumnPath, consistency_level cassandra.ConsistencyLevel) (retval448 *cassandra.ColumnOrSuperColumn, ire *cassandra.InvalidRequestException, nfe *cassandra.NotFoundException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
