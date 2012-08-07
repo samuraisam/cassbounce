@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"github.com/carloscm/gossie/src/cassandra"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"log"
@@ -71,7 +73,7 @@ func (r *CommandReceiver) Receive() {
 		if err != nil {
 			log.Print("CommandReceiver:Receiver could not read from client ", err)
 			dead = true
-			continue
+			continue // TODO: try to send an exception
 		}
 
 		// if it's something we're interested in, intercept it and process it using our own handler
@@ -86,7 +88,7 @@ func (r *CommandReceiver) Receive() {
 				// have no idea what you are tryn'a do son
 				r.protocol.Skip(thrift.STRUCT)
 				r.protocol.ReadMessageEnd()
-				exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function " + name)
+				exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function "+name)
 				r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
 				exc.Write(r.protocol)
 				r.protocol.WriteMessageEnd()
@@ -104,7 +106,7 @@ func (r *CommandReceiver) Receive() {
 		}
 
 		// outboundConn.protocol.WriteMessageBegin(name, typeId, seqId) // restore the message header
-		inboundData := make([]byte, 1024) // rest of the data coming off the inbound connection
+		inboundData := make([]byte, 1024)           // rest of the data coming off the inbound connection
 		l, readErr := r.transport.Read(inboundData) // read the rest of the inbound data
 		if readErr != nil {
 			log.Print("error reading inbound data: ", readErr) // TODO: notify client
@@ -115,8 +117,8 @@ func (r *CommandReceiver) Receive() {
 
 		// write the outbound request
 		outboundProt := outboundConn.protocolFactory.GetProtocol(outboundConn.transport) // create a protocol with the outbound transport
-		outboundProt.WriteMessageBegin(name, typeId, seqId) // write the header to the protocol (which writes it to the transport)
-		outboundProt.Transport().Write(inboundData) // write the remaining data to the outbound transport
+		outboundProt.WriteMessageBegin(name, typeId, seqId)                              // write the header to the protocol (which writes it to the transport)
+		outboundProt.Transport().Write(inboundData)                                      // write the remaining data to the outbound transport
 		outboundProt.Transport().Flush()
 
 		// read the outbound response
@@ -124,7 +126,7 @@ func (r *CommandReceiver) Receive() {
 		if oSeqId != seqId {
 			// hmm, got the wrong response back
 			r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
-			exc := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, "unmatched seqIds returned in response from downstream server")
+			exc := thrift.NewTApplicationException(thrift.BAD_SEQUENCE_ID, "unmatched seqIds returned in response from downstream server")
 			exc.Write(r.protocol)
 			r.protocol.WriteMessageEnd()
 			r.protocol.Transport().Flush()
@@ -153,7 +155,7 @@ func (r *CommandReceiver) Receive() {
 		r.protocol.WriteMessageBegin(oName, oTypeId, oSeqId)
 		_, iErr := r.protocol.Transport().Write(outboundData[:l])
 		r.protocol.Transport().Flush()
-		
+
 		if iErr != nil {
 			log.Print("error writing response back to inbound connection: ", iErr)
 		}
@@ -169,9 +171,16 @@ type PassthroughTransport struct {
 
 func (t *PassthroughTransport) IsOpen() bool { return true }
 func (t *PassthroughTransport) Open() error  { return nil }
-func (t *PassthroughTransport) Close() error { return nil }
+func (t *PassthroughTransport) Close() error {
+	t.buffer.Reset()
+	return nil
+}
 func (t *PassthroughTransport) ReadAll(buf []byte) (int, error) {
-	return t.Read(buf)
+	r, e := t.Read(buf)
+	if r != len(buf) {
+		return 0, errors.Error(fmt.Sprintf("All of %d could not be read!", r))
+	}
+	return r, e
 }
 func (t *PassthroughTransport) Read(buf []byte) (int, error) {
 	// log.Print("reading ")

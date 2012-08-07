@@ -16,11 +16,11 @@ type Connection interface {
 }
 
 type CassConnection struct {
-	socket    *thrift.TNonblockingSocket
-	transport *thrift.TFramedTransport
-	client    *cassandra.CassandraClient
-	node      string
-	keyspace  string
+	socket          *thrift.TNonblockingSocket
+	transport       *thrift.TFramedTransport
+	client          *cassandra.CassandraClient
+	node            string
+	keyspace        string
 	protocolFactory *thrift.TBinaryProtocolFactory
 }
 
