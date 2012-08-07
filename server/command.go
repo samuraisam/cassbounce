@@ -1,7 +1,8 @@
 package server
 
 import (
-	"bytes"
+	"errors"
+	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"io"
 	"time"
 )
@@ -16,12 +17,12 @@ type CommandPacket struct {
 }
 
 func NewCommandPacket(bytes []byte, length int, err error) *CommandPacket {
-	return &CommandPacket{bytes, length, error}
+	return &CommandPacket{bytes, length, err}
 }
 
-func (c *CommandPacket) Bytes() { return c.bytes }
-func (c *CommandPacket) Len()   { return c.length }
-func (c *CommandPacket) Error() { return c.err }
+func (c *CommandPacket) Bytes() []byte { return c.bytes }
+func (c *CommandPacket) Len() int      { return c.length }
+func (c *CommandPacket) Error() error  { return c.err }
 
 /*
  * Command - wraps the header and value of a thrift command
@@ -43,42 +44,121 @@ type Command interface {
 }
 
 type CassandraCommand struct {
-	name   string
-	seqId  int64
-	typeId int32
+	name            string
+	typeId          thrift.TMessageType
+	seqId           int32
+	protocolFactory *thrift.TBinaryProtocolFactory
 }
 
-func NewCassandraCommand(name, seqId, typeId) *CassandraCommand {
-	exc := &CassandraCommand{name, seqId, typeId}
+func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
+	protoFac := thrift.NewTBinaryProtocolFactoryDefault()
+	exc := &CassandraCommand{name, typeId, seqId, protoFac}
 	return exc
 }
 
-func (ce *CassandraCommand) Name() string  { return ce.name }
-func (ce *CassandraCommand) SeqId() int32  { return ce.seqId }
-func (ce *CassandraCommand) TypeId() int64 { return ce.typeId }
+func (ce *CassandraCommand) Name() string                { return ce.name }
+func (ce *CassandraCommand) TypeId() thrift.TMessageType { return ce.typeId }
+func (ce *CassandraCommand) SeqId() int32                { return ce.seqId }
 
+/*
+ * 1. Begin executing the configured command (name/typeid/seqid) on the upstream server (some random cassandra instance)
+ * 2. Stream all remaining inbound data (the rest of the command from some client) to the upstream server
+ * 3. Read the response header from the upstream server
+ * 4. Read all remaining upstream data and write it to the client via the `inPackets` chan
+ */
 func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
-	out := make(chan *CommandPacket)
+	inCh := make(chan *CommandPacket)
 	go func() {
-		// get a protocol and write
-		outTrans := NewCommandPacketTTransport(out)
-		inProtocol := outConn.ProtocolFactory().GetProtocol(outConn.Transport())
-		headProtExc := protocol.WriteMessageBegin(c.name, c.typeId, c.seqId)
+		// get transport and protocol for the inbound connection
+		inTrans := NewCommandPacketTTransport(inCh)
+		inProt := ce.protocolFactory.GetProtocol(inTrans)
+
+		// get transport and protocol for the upstream connection
+		outTrans := outConn.Transport()
+		outProt := outConn.ProtocolFactory().GetProtocol(outTrans)
+
+		// write our inbound command header to the upstream connection
+		headProtExc := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
+
+		// respond to errors from writing the command header
 		if headProtExc != nil {
-			// could not read the header, so just write whatever error was encountered back and gtfo
-			e.writeError(protocol, headProtExc)
-			close(out)
+			// headProtExc is a thrift.TTException
+			ce.writeError(inProt, headProtExc)
+			close(inCh)
 			return
 		}
 
+		// write all of our inbound packets to the upstream server
+		for pkt := range inPackets {
+			if pkt.Error() != nil {
+				// if we got an error, then bail
+				ce.writeError(inProt, thrift.NewTProtocolExceptionFromOsError(pkt.Error()))
+				close(inCh)
+				return
+			}
+
+			// pass on our inbound input to the upstream server
+			outTrans.Write(pkt.Bytes())
+		}
+
+		// start reading a connection, block until it's ready
+		oName, oTypId, oSeqId, oErr := outProt.ReadMessageBegin()
+
+		// respond to errors from reading the command header
+		if oErr != nil {
+			ce.writeError(inProt, oErr)
+			close(inCh)
+			return
+		}
+
+		// write our header received from the upstream to the inbound connection
+		iErr := inProt.WriteMessageBegin(oName, oTypId, oSeqId)
+		if iErr != nil {
+			// received an error writing response header, try and send an error
+			ce.writeError(inProt, iErr)
+			close(inCh)
+			return
+		}
+
+		// read all data from the upstream server, streaming them to the inbound connection
+		// note: at this point we kind of have our asses hanging out: we can not successfully an error header should we encounter 
+		// an error reading, as we've already written the header. we'll still 
+		for pkt := range readGen(outTrans) {
+			if pkt.Error() != nil {
+				ce.writeError(inProt, thrift.NewTProtocolExceptionFromOsError(pkt.Error()))
+				close(inCh)
+				return
+			}
+			inTrans.Write(pkt.Bytes()) // this will ultimately translate into inCh <-pkt
+		}
 	}()
-	return out
+	return inCh
 }
 
-func (ce *CassandraCommand) writeError(prot TProtocol, exc TException) {
+func (ce *CassandraCommand) writeError(prot thrift.TProtocol, exc thrift.TException) {
+	// see whihch of the known thrift exception types it was
+	_, isProtExc := exc.(thrift.TProtocolException)
+	appExc, isAppExc := exc.(thrift.TApplicationException)
+	_, isTransExc := exc.(thrift.TTransportException)
+
+	// write the exception header
 	prot.WriteMessageBegin(ce.name, thrift.EXCEPTION, ce.seqId)
-	exc.Write(prot)
-	prot.WritesMessageEnd()
+
+	// convert it into an application exception if not already
+	if !isAppExc {
+		if isProtExc {
+			appExc = thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, exc.Error())
+		} else if isTransExc {
+			appExc = thrift.NewTApplicationException(thrift.INTERNAL_ERROR, exc.Error())
+		} else {
+			appExc = thrift.NewTApplicationExceptionMessage(exc.Error())
+		}
+	}
+
+	appExc.Write(prot)
+
+	// finish it 
+	prot.WriteMessageEnd()
 	prot.Transport().Flush()
 }
 
@@ -89,28 +169,28 @@ func (ce *CassandraCommand) writeError(prot TProtocol, exc TException) {
  * communications only. 
  */
 type CommandPacketTTransport struct {
-	ch <-chan *CommandPacket
+	ch chan<- *CommandPacket // write only yo
 }
 
-func NewCommandPacketTTransport(ch <-chan *CommandPacket) *CommandPacketTTransport {
+func NewCommandPacketTTransport(ch chan<- *CommandPacket) *CommandPacketTTransport {
 	return &CommandPacketTTransport{ch}
 }
 
-func (t *PassthroughTransport) IsOpen() bool { return true }
-func (t *PassthroughTransport) Open() error  { return nil }
-func (t *PassthroughTransport) Close() error { return nil }
-func (t *PassthroughTransport) ReadAll(buf []byte) (int, error) {
-	return 0, errors.Error("Can not be read from.")
+func (t *CommandPacketTTransport) IsOpen() bool { return true }
+func (t *CommandPacketTTransport) Open() error  { return nil }
+func (t *CommandPacketTTransport) Close() error { return nil }
+func (t *CommandPacketTTransport) ReadAll(buf []byte) (int, error) {
+	return 0, errors.New("Can not be read from.")
 }
-func (t *PassthroughTransport) Read(buf []byte) (int, error) {
-	return 0, errors.Error("Can not be read from.")
+func (t *CommandPacketTTransport) Read(buf []byte) (int, error) {
+	return 0, errors.New("Can not be read from.")
 }
-func (t *PassthroughTransport) Write(buf []byte) (int, error) {
+func (t *CommandPacketTTransport) Write(buf []byte) (int, error) {
 	t.ch <- NewCommandPacket(buf, len(buf), nil)
 	return len(buf), nil
 }
-func (t *PassthroughTransport) Flush() error { return nil }
-func (t *PassthroughTransport) Peek() bool   { return false }
+func (t *CommandPacketTTransport) Flush() error { return nil }
+func (t *CommandPacketTTransport) Peek() bool   { return false }
 
 /*
  * Read all bytes from `reader` and pass them and any errors as *CommandPackets to a returned channel
@@ -128,12 +208,17 @@ func readGen(reader io.Reader) <-chan *CommandPacket {
 				copy(res, b[:n])
 			} else {
 				// nothing to see here
-				res := nil
+				// res := nil
+			}
+			doBreak := err != nil
+			if err == io.EOF {
+				err = nil // set err to nil, because we just want to close on EOF
 			}
 			// send the packet, with or without error - consumers should cease to read if an error is encountered
-			c <- NewCommandPacket(res, n, err)
-			if err != nil {
+			ch <- NewCommandPacket(res, n, err)
+			if doBreak {
 				// exit when an error is encountered
+				close(ch)
 				break
 			}
 		}

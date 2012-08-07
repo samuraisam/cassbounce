@@ -10,6 +10,8 @@ import (
 )
 
 type Connection interface {
+	Transport() thrift.TTransport
+	ProtocolFactory() *thrift.TBinaryProtocolFactory
 	Write(buf []byte) (nwritten int, err error)
 	Read(buf []byte) (nread int, err error)
 	Close() (err error)
@@ -23,6 +25,9 @@ type CassConnection struct {
 	keyspace        string
 	protocolFactory *thrift.TBinaryProtocolFactory
 }
+
+func (c *CassConnection) Transport() thrift.TTransport                    { return c.transport }
+func (c *CassConnection) ProtocolFactory() *thrift.TBinaryProtocolFactory { return c.protocolFactory }
 
 var (
 	ErrorConnectionTimeout = errors.New("Connection timeout")

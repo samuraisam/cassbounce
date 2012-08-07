@@ -178,7 +178,7 @@ func (t *PassthroughTransport) Close() error {
 func (t *PassthroughTransport) ReadAll(buf []byte) (int, error) {
 	r, e := t.Read(buf)
 	if r != len(buf) {
-		return 0, errors.Error(fmt.Sprintf("All of %d could not be read!", r))
+		return 0, errors.New(fmt.Sprintf("All of %d could not be read!", r))
 	}
 	return r, e
 }
