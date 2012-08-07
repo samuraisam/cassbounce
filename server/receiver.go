@@ -49,35 +49,23 @@ func NewCommandReceiver(conn net.Conn, hostList HostList, poolMan PoolManager) *
  * Begin receiving from an inbound connection, and continue receiving from it until the connection is severed.
  */
 func (r *CommandReceiver) Receive() {
-	// name, _, _, e := r.protocol.ReadMessageBegin()
-	// if e != nil {
-	// 	log.Print("CommandReceiver:Receive error reading from client: ", e)
-	// }
-	// log.Print("XXX: got name: ", name)
-	// return
+	// XXX: get a server connection - temporary
+	destinationHost, err := r.hostList.Get()
+	if err != nil {
+		log.Print("XXX: error getting outbound host: ", err)
+		return
+	}
+	outboundConn, err := Dial(destinationHost.String(), "fart", time.Duration(100)*time.Millisecond)
+	if err != nil {
+		log.Print("XXX: Error establishing outbound connection: ", err)
+		return
+	}
 
-	defer func() { r.remoteConn.Close() }()
+	defer func() { r.remoteConn.Close(); outboundConn.Close() }()
 
 	dead := false
 
 	for !dead {
-		// output stubbing
-		// protFac := thrift.NewTBinaryProtocolFactoryDefault()
-		// var tbuf bytes.Buffer
-		// trans := PassthroughTransport{tbuf}
-		// oprot := protFac.GetProtocol(&trans)
-
-		destinationHost, err := r.hostList.Get()
-		if err != nil {
-			log.Print("XXX: error getting outbound host: ", err)
-			return
-		}
-		outboundConn, err := Dial(destinationHost.String(), "fart", time.Duration(100)*time.Millisecond)
-		if err != nil {
-			log.Print("XXX: Error establishing outbound connection: ", err)
-			return
-		}
-
 		// read the header - this basically does the exact same thing as proc.Process(in_prot, out_prot)
 		name, _, seqId, err := r.protocol.ReadMessageBegin()
 		if err != nil {
@@ -86,36 +74,42 @@ func (r *CommandReceiver) Receive() {
 			continue
 		}
 
-		// if name == "set_keyspace" {
-		// 	// intercept set_keyspace and call it ourselves (just for now, the pool will do this later...)
-		// 	outboundConn.
-		// }
+		// if it's something we're interested in, intercept it and process it using our own handler
+		if name == "set_keyspace" || name == "login" {
+			// set up the passthrough processor
+			pt := &CassandraPassthrough{outboundConn}
+			proc := cassandra.NewCassandraProcessor(pt)
 
-		// set up the passthrough processor
-		pt := &CassandraPassthrough{outboundConn}
-		proc := cassandra.NewCassandraProcessor(pt)
+			processor, nameFound := proc.GetProcessorFunction(name) // get a processor for the name
 
-		processor, nameFound := proc.GetProcessorFunction(name) // get a processor for the name
+			if !nameFound || processor == nil {
+				// have no idea what you are tryn'a do son
+				r.protocol.Skip(thrift.STRUCT)
+				r.protocol.ReadMessageEnd()
+				exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function " + name)
+				r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
+				exc.Write(r.protocol)
+				r.protocol.WriteMessageEnd()
+				r.protocol.Transport().Flush()
+				dead = true
+				continue
+			}
 
-		if !nameFound || processor == nil {
-			// have no idea what you are tryn'a do son
-			r.protocol.Skip(thrift.STRUCT)
-			r.protocol.ReadMessageEnd()
-			exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function " + name)
-			r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
-			exc.Write(r.protocol)
-			r.protocol.WriteMessageEnd()
-			r.protocol.Transport().Flush()
-			dead = true
-			continue
+			_, exc := processor.Process(seqId, r.protocol, r.protocol)
+			if exc != nil {
+				log.Print("CommandReceiver:Receiver failed to execute function '", name, "': ", exc)
+				dead = true
+			}
+			continue // move to next whether or not this was successful
 		}
 
-		_, exc := processor.Process(seqId, r.protocol, r.protocol)
-		if exc != nil {
-			log.Print("CommandReceiver:Receiver failed to execute function '", name, "': ", exc)
-			dead = true
-			continue
+		// outboundConn.protocol.WriteMessageBegin(name, typeId, seqId) // restore the message header
+		inboundData := make([]byte, 1024) // rest of the data coming off the inbound connection
+		l, readErr := r.transport.Read(inboundData) // read the rest of the inbound data
+		if readErr != nil {
+			log.Print("error reading inbound data: ", readErr)
 		}
+		log.Print("got inbound name: ", name, " data: ", string(inboundData[:l]))
 
 		// obuf := make([]byte, 1024)
 		// l, _ := trans.Read(obuf)
