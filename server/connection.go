@@ -21,6 +21,7 @@ type CassConnection struct {
 	client    *cassandra.CassandraClient
 	node      string
 	keyspace  string
+	protocolFactory *thrift.TBinaryProtocolFactory
 }
 
 var (
@@ -74,7 +75,7 @@ func Dial(node string, keyspace string, timeout time.Duration) (*CassConnection,
 		return nil, err
 	}
 	log.Print("Opened new connection, protocol version: ", ver)
-	return &CassConnection{sock, transport, cli, node, keyspace}, nil
+	return &CassConnection{sock, transport, cli, node, keyspace, protocolFactory}, nil
 }
 
 func (c *CassConnection) Write(buf []byte) (int, error) {

@@ -67,7 +67,7 @@ func (r *CommandReceiver) Receive() {
 
 	for !dead {
 		// read the header - this basically does the exact same thing as proc.Process(in_prot, out_prot)
-		name, _, seqId, err := r.protocol.ReadMessageBegin()
+		name, typeId, seqId, err := r.protocol.ReadMessageBegin()
 		if err != nil {
 			log.Print("CommandReceiver:Receiver could not read from client ", err)
 			dead = true
@@ -107,22 +107,56 @@ func (r *CommandReceiver) Receive() {
 		inboundData := make([]byte, 1024) // rest of the data coming off the inbound connection
 		l, readErr := r.transport.Read(inboundData) // read the rest of the inbound data
 		if readErr != nil {
-			log.Print("error reading inbound data: ", readErr)
+			log.Print("error reading inbound data: ", readErr) // TODO: notify client
+			dead = true
+			continue
 		}
 		log.Print("got inbound name: ", name, " data: ", string(inboundData[:l]))
 
-		// obuf := make([]byte, 1024)
-		// l, _ := trans.Read(obuf)
+		// write the outbound request
+		outboundProt := outboundConn.protocolFactory.GetProtocol(outboundConn.transport) // create a protocol with the outbound transport
+		outboundProt.WriteMessageBegin(name, typeId, seqId) // write the header to the protocol (which writes it to the transport)
+		outboundProt.Transport().Write(inboundData) // write the remaining data to the outbound transport
+		outboundProt.Transport().Flush()
 
-		// // log.Print("XXX: writing ", l, " ", err, " ", string(obuf))
+		// read the outbound response
+		oName, oTypeId, oSeqId, oErr := outboundProt.ReadMessageBegin()
+		if oSeqId != seqId {
+			// hmm, got the wrong response back
+			r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
+			exc := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, "unmatched seqIds returned in response from downstream server")
+			exc.Write(r.protocol)
+			r.protocol.WriteMessageEnd()
+			r.protocol.Transport().Flush()
+			dead = true
+			continue
+		}
 
-		// ll, eerr := r.remoteConn.Write(obuf[:l])
-		// log.Print("XXX: writing ", ll, " bytes: ", eerr)
+		if oErr != nil {
+			log.Print("error reading response header from upstream server ", oErr) // TODO: notify client
+			dead = true
+			continue
+		}
 
-		// if eerr != nil {
-		// 	// prolly a disconnect
-		// 	dead = true
-		// }
+		// read the rest of the outbound response
+		outboundData := make([]byte, 1024)
+		l, oReadEr := outboundProt.Transport().Read(outboundData)
+		if oReadEr != nil {
+			log.Print("error reading response from upstream server")
+			dead = true
+			continue // TODO: notify client
+		}
+
+		log.Print("read ", l, " bytes response from upstream server")
+
+		// write the response to the inbound connection
+		r.protocol.WriteMessageBegin(oName, oTypeId, oSeqId)
+		_, iErr := r.protocol.Transport().Write(outboundData[:l])
+		r.protocol.Transport().Flush()
+		
+		if iErr != nil {
+			log.Print("error writing response back to inbound connection: ", iErr)
+		}
 	}
 }
 
