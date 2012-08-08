@@ -105,72 +105,83 @@ func (r *CommandReceiver) Receive() {
 			continue // move to next whether or not this was successful
 		}
 
+		// fart
 		cmd := NewCassandraCommand(name, typeId, seqId)
-		res := cmd.Execute(readGen(r.transport, "inboundReq"), outboundConn, time.Duration(100)*time.Millisecond)
+		<-cmd.Execute(/*readGen(r.transport, "inboundReq"),*/ outboundConn, time.Duration(100) * time.Millisecond, r.protocol)
+		log.Print("herp")
+		continue
 
-		for pkt := range res {
-			// write the response to the client
-			if pkt.Error() != nil {
-				log.Print("CommandReceiver:Receive error reading response from upstream client: ", pkt.Error())
-				return
-			}
-			r.transport.Write(pkt.Bytes())
+		// for pkt := range res {
+		// 	// write the response to the client
+		// 	if pkt.Error() != nil {
+		// 		log.Print("CommandReceiver:Receive error reading response from upstream client: ", pkt.Error())
+		// 		return
+		// 	}
+		// 	log.Print("CommandReceiver:Receive writing ", pkt.Len(), " bytes: ", string(pkt.Bytes()))
+		// 	rWritten, rErr := r.transport.Write(pkt.Bytes())
+		// 	if rErr != nil {
+		// 		log.Print("CommandReceiver:Receive error sending data back to client: ", rErr)
+		// 		break
+		// 	}
+		// 	log.Print("CommandReceiver:Receive wrote ", rWritten, " bytes to client")
+		// }
+		// er := r.transport.Flush()
+		// log.Print("flushed! ", er)
+
+		// outboundConn.protocol.WriteMessageBegin(name, typeId, seqId) // restore the message header
+		inboundData := make([]byte, 1024)           // rest of the data coming off the inbound connection
+		l, readErr := r.transport.Read(inboundData) // read the rest of the inbound data
+		if readErr != nil {
+			log.Print("error reading inbound data: ", readErr) // TODO: notify client
+			dead = true
+			continue
+		}
+		log.Print("got inbound name: ", name, " data: ", string(inboundData[:l]))
+
+		// write the outbound request
+		outboundProt := outboundConn.protocolFactory.GetProtocol(outboundConn.transport) // create a protocol with the outbound transport
+		outboundProt.WriteMessageBegin(name, typeId, seqId)                              // write the header to the protocol (which writes it to the transport)
+		outboundProt.Transport().Write(inboundData)                                      // write the remaining data to the outbound transport
+		outboundProt.Transport().Flush()
+
+		// read the outbound response
+		oName, oTypeId, oSeqId, oErr := outboundProt.ReadMessageBegin()
+		if oSeqId != seqId {
+			// hmm, got the wrong response back
+			r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
+			exc := thrift.NewTApplicationException(thrift.BAD_SEQUENCE_ID, "unmatched seqIds returned in response from downstream server")
+			exc.Write(r.protocol)
+			r.protocol.WriteMessageEnd()
+			r.protocol.Transport().Flush()
+			dead = true
+			continue
 		}
 
-		// // outboundConn.protocol.WriteMessageBegin(name, typeId, seqId) // restore the message header
-		// inboundData := make([]byte, 1024)           // rest of the data coming off the inbound connection
-		// l, readErr := r.transport.Read(inboundData) // read the rest of the inbound data
-		// if readErr != nil {
-		// 	log.Print("error reading inbound data: ", readErr) // TODO: notify client
-		// 	dead = true
-		// 	continue
-		// }
-		// log.Print("got inbound name: ", name, " data: ", string(inboundData[:l]))
+		if oErr != nil {
+			log.Print("error reading response header from upstream server ", oErr) // TODO: notify client
+			dead = true
+			continue
+		}
 
-		// // write the outbound request
-		// outboundProt := outboundConn.protocolFactory.GetProtocol(outboundConn.transport) // create a protocol with the outbound transport
-		// outboundProt.WriteMessageBegin(name, typeId, seqId)                              // write the header to the protocol (which writes it to the transport)
-		// outboundProt.Transport().Write(inboundData)                                      // write the remaining data to the outbound transport
-		// outboundProt.Transport().Flush()
+		// read the rest of the outbound response
+		outboundData := make([]byte, 1024)
+		l, oReadEr := outboundProt.Transport().Read(outboundData)
+		if oReadEr != nil {
+			log.Print("error reading response from upstream server")
+			dead = true
+			continue // TODO: notify client
+		}
 
-		// // read the outbound response
-		// oName, oTypeId, oSeqId, oErr := outboundProt.ReadMessageBegin()
-		// if oSeqId != seqId {
-		// 	// hmm, got the wrong response back
-		// 	r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
-		// 	exc := thrift.NewTApplicationException(thrift.BAD_SEQUENCE_ID, "unmatched seqIds returned in response from downstream server")
-		// 	exc.Write(r.protocol)
-		// 	r.protocol.WriteMessageEnd()
-		// 	r.protocol.Transport().Flush()
-		// 	dead = true
-		// 	continue
-		// }
+		log.Print("read ", l, " bytes response from upstream server")
 
-		// if oErr != nil {
-		// 	log.Print("error reading response header from upstream server ", oErr) // TODO: notify client
-		// 	dead = true
-		// 	continue
-		// }
+		// write the response to the inbound connection
+		r.protocol.WriteMessageBegin(oName, oTypeId, oSeqId)
+		_, iErr := r.protocol.Transport().Write(outboundData[:l])
+		r.protocol.Transport().Flush()
 
-		// // read the rest of the outbound response
-		// outboundData := make([]byte, 1024)
-		// l, oReadEr := outboundProt.Transport().Read(outboundData)
-		// if oReadEr != nil {
-		// 	log.Print("error reading response from upstream server")
-		// 	dead = true
-		// 	continue // TODO: notify client
-		// }
-
-		// log.Print("read ", l, " bytes response from upstream server")
-
-		// // write the response to the inbound connection
-		// r.protocol.WriteMessageBegin(oName, oTypeId, oSeqId)
-		// _, iErr := r.protocol.Transport().Write(outboundData[:l])
-		// r.protocol.Transport().Flush()
-
-		// if iErr != nil {
-		// 	log.Print("error writing response back to inbound connection: ", iErr)
-		// }
+		if iErr != nil {
+			log.Print("error writing response back to inbound connection: ", iErr)
+		}
 	}
 }
 
@@ -220,7 +231,8 @@ func (c *CassandraPassthrough) Login(auth_request *cassandra.AuthenticationReque
 	k1, _ := auth_request.Credentials.Get("username")
 	k2, _ := auth_request.Credentials.Get("password")
 	log.Print("CassandraPassthrough:Login  username=", k1, " password=", k2)
-	return c.conn.client.Login(auth_request)
+	//return c.conn.client.Login(auth_request)
+	return nil, nil, nil
 }
 
 func (c *CassandraPassthrough) SetKeyspace(keyspace string) (ire *cassandra.InvalidRequestException, err error) {
