@@ -8,7 +8,7 @@ pool.fill()
 
 cf = pycassa.ColumnFamily(pool, 'farts')
 
-# print list(cf.get_range())
+print list(cf.get_range())
 
 while True:
 	rowkey = raw_input("key: ")
