@@ -69,41 +69,7 @@ func (r *CommandReceiver) Receive() {
 
 	for !dead {
 		// read the header - this basically does the exact same thing as proc.Process(in_prot, out_prot)
-		name, typeId, seqId, err := r.protocol.ReadMessageBegin()
-		if err != nil {
-			log.Print("CommandReceiver:Receiver could not read from client ", err)
-			dead = true
-			continue // TODO: try to send an exception
-		}
 
-		// if it's something we're interested in, intercept it and process it using our own handler
-		if name == "set_keyspace" || name == "login" {
-			// set up the passthrough processor
-			pt := &CassandraPassthrough{outboundConn}
-			proc := cassandra.NewCassandraProcessor(pt)
-
-			processor, nameFound := proc.GetProcessorFunction(name) // get a processor for the name
-
-			if !nameFound || processor == nil {
-				// have no idea what you are tryn'a do son
-				r.protocol.Skip(thrift.STRUCT)
-				r.protocol.ReadMessageEnd()
-				exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function "+name)
-				r.protocol.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
-				exc.Write(r.protocol)
-				r.protocol.WriteMessageEnd()
-				r.protocol.Transport().Flush()
-				dead = true
-				continue
-			}
-
-			_, exc := processor.Process(seqId, r.protocol, r.protocol)
-			if exc != nil {
-				log.Print("CommandReceiver:Receiver failed to execute function '", name, "': ", exc)
-				dead = true
-			}
-			continue // move to next whether or not this was successful
-		}
 
 		// fart
 		cmd := NewCassandraCommand(name, typeId, seqId)
@@ -137,6 +103,83 @@ func (r *CommandReceiver) Receive() {
 }
 
 /*
+ * Begin reading the connection and establish and allocate a Command and ConnectionDef
+ *
+ * It will intercept `set_keyspace` and `login` and use those to populate a ConnectionDef if sent by a client
+ */
+
+func (r *CommandReceiver) Handshake() (ConnectionDef, Command) {
+	// start reading immediatly; get the header
+	name, typeId, seqId, err := r.protocol.ReadMessageBegin()
+	if err != nil {
+		log.Print("CommandReceiver:Handshake could not read from client ", err)
+		r.protocol.Skip(thrift.STRUCT)
+		r.protocol.ReadMessageEnd()
+		TWriteException(name, seqId, r.protocol, err)
+		return nil, nil
+	}
+
+	handshaking := func() bool { name == "set_keyspace" || name == "login" }
+	hadLogin := false // whether login was a part of handshaking
+	var username string // set if hadLogin is true
+	var password string // set if hadLogin is true
+	var keyspace string // must be set if handshaking() == true
+	var lastHandhakeStep string // set if handshaking, used to generate useful logging output
+
+	// if we are handshaking, that is name is either `set_keyspace` or `login` then 
+	for handshaking() {
+		lastHandhakeStep = name
+		// set up the passthrough processor
+		pt := NewLoginAndKeyspaceHijackingProcessor()
+		proc := cassandra.NewCassandraProcessor(pt)
+
+		// get a processor for the name
+		processor, nameFound := proc.GetProcessorFunction(name) 
+
+		if !nameFound || processor == nil {
+			// have no idea what you are tryn'a do son (shouldn't ever get here as we provide the processor)
+			exc := thrift.NewTApplicationException(thrift.UNKNOWN_METHOD, "Unknown function "+name)
+			r.protocol.Skip(thrift.STRUCT)
+			r.protocol.ReadMessageEnd()
+			TWriteException(name, seqId, r.protcol, exc)
+			return nil, nil
+		}
+
+		// run it
+		_, exc := processor.Process(seqId, r.protocol, r.protocol)
+		if exc != nil {
+			log.Print("CommandReceiver:Receiver failed to execute function '", name, "': ", exc)
+			TWriteException(name, seqId, r.protocol, exc)
+			return nil, nil
+		}
+
+		if pt.HasLogin() {
+			hadLogin = true
+			username = pt.Username()
+			password = pt.Password()
+		}
+		if pt.HasKeyspace() {
+			keyspace = pt.Keyspace()
+		}
+
+		name, typeId, seqId, err = r.protocol.ReadMessageBegin() // start reading the next message to get the command
+
+		if err != nil {
+			log.Print("CommandReceiver:Handshake could not read message header from client after handshake step '", lastHandhakeStep, "' ", err)
+			r.protcol.Skip(thrift.STRUCT)
+			r.protcol.ReadMessageEnd()
+			TWriteException(name, seqId, r.protcol, err)
+			return nil, nil // bail out totally
+		}
+	}
+
+	// we are not handshaking, just executing commands
+	return nil, NewCassandraCommand(name, typeId, seqId)
+
+}
+
+
+/*
  * A TTransport used to just pass all data written to it into the provided bytes.Buffer
  */
 type PassthroughTransport struct {
@@ -167,134 +210,43 @@ func (t *PassthroughTransport) Write(buf []byte) (int, error) {
 func (t *PassthroughTransport) Flush() error { return nil }
 func (t *PassthroughTransport) Peek() bool   { return false }
 
+
 /*
- * CassandraPassthrough
- *
- * Implements `ICassandra` so we may hijack some communications with the backend servers
- *
- * Most things are not implemented
+ * Pretends to be a CassandraProcessor and intercepts `login` and `set_keyspace`, assigning the values to ourself.
  */
-type CassandraPassthrough struct {
-	conn *CassConnection
+type LoginAndKeyspaceHijackingProcessor {
+	*CassandraPassthrough
+	keyspace string
+	username string
+	password string
+	hasLogin bool
+	hasKeyspace bool
 }
 
-func (c *CassandraPassthrough) Login(auth_request *cassandra.AuthenticationRequest) (authnx *cassandra.AuthenticationException, authzx *cassandra.AuthorizationException, err error) {
-	k1, _ := auth_request.Credentials.Get("username")
-	k2, _ := auth_request.Credentials.Get("password")
-	log.Print("CassandraPassthrough:Login  username=", k1, " password=", k2)
-	//return c.conn.client.Login(auth_request)
+func NewLoginAndKeyspaceHijackingProcessor() *LoginAndKeyspaceHijackingProcessor {
+	return &LoginAndKeyspaceHijackingProcessor{&CassandraPassthrough{}, nil, nil, nil, false, false}
+}
+
+func (c *LoginAndKeyspaceHijackingProcessor) Keyspace() string { return c.keyspace }
+func (c *LoginAndKeyspaceHijackingProcessor) HasKeyspace() bool { return c.hasKeyspace }
+func (c *LoginAndKeyspaceHijackingProcessor) HasLogin() bool { return c.hasLogin }
+func (c *LoginAndKeyspaceHijackingProcessor) Username() string { return c.username }
+func (c *LoginAndKeyspaceHijackingProcessor) Password() string { return c.password }
+
+/*
+ * Overrides the `login` thrift method - it has no usable return value so just return nil
+ */
+func (c *LoginAndKeyspaceHijackingProcessor) Login(authReq *cassandra.AuthenticationRequest) (*cassandra.AuthenticationException, *cassandra.AuthorizationException, error) {
+	c.hasLogin = true
+	c.username = authReq.Credentials.Get("username")
+	c.password = authReq.Credentials.Get("password")
 	return nil, nil, nil
 }
 
-func (c *CassandraPassthrough) SetKeyspace(keyspace string) (ire *cassandra.InvalidRequestException, err error) {
-	log.Print("CassandraPassthrough:SetKeyspace ks=", keyspace)
-	return c.conn.client.SetKeyspace(keyspace)
-}
-
-func (c *CassandraPassthrough) Get(key []byte, column_path *cassandra.ColumnPath, consistency_level cassandra.ConsistencyLevel) (retval448 *cassandra.ColumnOrSuperColumn, ire *cassandra.InvalidRequestException, nfe *cassandra.NotFoundException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) GetSlice(key []byte, column_parent *cassandra.ColumnParent, predicate *cassandra.SlicePredicate, consistency_level cassandra.ConsistencyLevel) (retval449 thrift.TList, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) GetCount(key []byte, column_parent *cassandra.ColumnParent, predicate *cassandra.SlicePredicate, consistency_level cassandra.ConsistencyLevel) (retval450 int32, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return 0, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) MultigetSlice(keys thrift.TList, column_parent *cassandra.ColumnParent, predicate *cassandra.SlicePredicate, consistency_level cassandra.ConsistencyLevel) (retval451 thrift.TMap, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) MultigetCount(keys thrift.TList, column_parent *cassandra.ColumnParent, predicate *cassandra.SlicePredicate, consistency_level cassandra.ConsistencyLevel) (retval452 thrift.TMap, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) GetRangeSlices(column_parent *cassandra.ColumnParent, predicate *cassandra.SlicePredicate, range_a1 *cassandra.KeyRange, consistency_level cassandra.ConsistencyLevel) (retval453 thrift.TList, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) GetIndexedSlices(column_parent *cassandra.ColumnParent, index_clause *cassandra.IndexClause, column_predicate *cassandra.SlicePredicate, consistency_level cassandra.ConsistencyLevel) (retval454 thrift.TList, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) Insert(key []byte, column_parent *cassandra.ColumnParent, column *cassandra.Column, consistency_level cassandra.ConsistencyLevel) (ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) Add(key []byte, column_parent *cassandra.ColumnParent, column *cassandra.CounterColumn, consistency_level cassandra.ConsistencyLevel) (ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) Remove(key []byte, column_path *cassandra.ColumnPath, timestamp int64, consistency_level cassandra.ConsistencyLevel) (ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) RemoveCounter(key []byte, path *cassandra.ColumnPath, consistency_level cassandra.ConsistencyLevel) (ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) BatchMutate(mutation_map thrift.TMap, consistency_level cassandra.ConsistencyLevel) (ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, err error) {
-	return nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) Truncate(cfname string) (ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, err error) {
-	return nil, nil, nil
-}
-
-func (c *CassandraPassthrough) DescribeSchemaVersions() (retval461 thrift.TMap, ire *cassandra.InvalidRequestException, err error) {
-	return nil, nil, nil
-}
-
-func (c *CassandraPassthrough) DescribeKeyspaces() (retval462 thrift.TList, ire *cassandra.InvalidRequestException, err error) {
-	return nil, nil, nil
-}
-
-func (c *CassandraPassthrough) DescribeClusterName() (retval463 string, err error) { return "", nil }
-
-func (c *CassandraPassthrough) DescribeVersion() (retval464 string, err error) { return "", nil }
-
-func (c *CassandraPassthrough) DescribeRing(keyspace string) (retval465 thrift.TList, ire *cassandra.InvalidRequestException, err error) {
-	return nil, nil, nil
-}
-
-func (c *CassandraPassthrough) DescribePartitioner() (retval466 string, err error) { return "", nil }
-
-func (c *CassandraPassthrough) DescribeSnitch() (retval467 string, err error) { return "", nil }
-
-func (c *CassandraPassthrough) DescribeKeyspace(keyspace string) (retval468 *cassandra.KsDef, nfe *cassandra.NotFoundException, ire *cassandra.InvalidRequestException, err error) {
-	return nil, nil, nil, nil
-}
-
-func (c *CassandraPassthrough) DescribeSplits(cfName string, start_token string, end_token string, keys_per_split int32) (retval469 thrift.TList, ire *cassandra.InvalidRequestException, err error) {
-	return nil, nil, nil
-}
-
-func (c *CassandraPassthrough) SystemAddColumnFamily(cf_def *cassandra.CfDef) (retval470 string, ire *cassandra.InvalidRequestException, sde *cassandra.SchemaDisagreementException, err error) {
-	return "", nil, nil, nil
-}
-
-func (c *CassandraPassthrough) SystemDropColumnFamily(column_family string) (retval471 string, ire *cassandra.InvalidRequestException, sde *cassandra.SchemaDisagreementException, err error) {
-	return "", nil, nil, nil
-}
-
-func (c *CassandraPassthrough) SystemAddKeyspace(ks_def *cassandra.KsDef) (retval472 string, ire *cassandra.InvalidRequestException, sde *cassandra.SchemaDisagreementException, err error) {
-	return "", nil, nil, nil
-}
-
-func (c *CassandraPassthrough) SystemDropKeyspace(keyspace string) (retval473 string, ire *cassandra.InvalidRequestException, sde *cassandra.SchemaDisagreementException, err error) {
-	return "", nil, nil, nil
-}
-
-func (c *CassandraPassthrough) SystemUpdateKeyspace(ks_def *cassandra.KsDef) (retval474 string, ire *cassandra.InvalidRequestException, sde *cassandra.SchemaDisagreementException, err error) {
-	return "", nil, nil, nil
-}
-
-func (c *CassandraPassthrough) SystemUpdateColumnFamily(cf_def *cassandra.CfDef) (retval475 string, ire *cassandra.InvalidRequestException, sde *cassandra.SchemaDisagreementException, err error) {
-	return "", nil, nil, nil
-}
-
-func (c *CassandraPassthrough) ExecuteCqlQuery(query []byte, compression cassandra.Compression) (retval476 *cassandra.CqlResult, ire *cassandra.InvalidRequestException, ue *cassandra.UnavailableException, te *cassandra.TimedOutException, sde *cassandra.SchemaDisagreementException, err error) {
-	return nil, nil, nil, nil, nil, nil
+/*
+ * Overrides the `set_keyspace` thrift method - it has no usable return value, so just return nil
+ */
+func (c *LoginAndKeyspaceHijackingProcessor) SetKeyspace(keyspace string) (*cassandra.InvalidRequestException, error) {
+	c.keyspace = keyspace
+	return nil, nil
 }

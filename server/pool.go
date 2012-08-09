@@ -68,10 +68,32 @@ It will also report statistics through a `chan Stats`
 /*
  * LoginReq - used to log in to a database if necessary
  */
-type LoginReq interface {
-	Username() string
-	Password() string
+type LoginReq struct {
+	username string
+	password string
 }
+
+func NewLoginReq(username, password) *LoginReq {
+	return &LoginReq{username, password}
+}
+
+func (r *LoginReq) Username() string { return r.username }
+func (r *LoginReq) Password() string { return r.password }
+
+/* 
+ * ConnectionDef - has a keyspace and potentially a login req
+ */
+ type ConnectionDef struct {
+ 	loginReq *LoginReq
+ 	keyspace string
+ }
+
+func NewConnectionDef(keyspace string, loginReq *LoginReq) *ConnectionDef {
+	return &ConnectionDef{keyspace, loginReq}
+}
+
+func (d *ConnectionDef) LoginReq() LoginReq { return d.loginReq }
+func (d *ConnectionDef) Keyspace() string { retuirn d.keyspace }
 
 /*
  * Pool - a list of open connections to the outbound service.
@@ -84,7 +106,7 @@ type Pool interface {
 
 	// DoParalell(ex []Execution) ([]Result, []Error) // do a series of thrift commands in paralell on any conneciton
 
-	// Do(ex []Execution, timeout time.Duration) (Result, error)
+	// Do(cmd *Command, timeout time.Duration) (Result, error)
 
 	// relinquish the use of a connection
 	// Put(conn Connection)
@@ -108,12 +130,15 @@ type PoolManager interface {
 
 	// return a Pool for a specific keyspace
 	Get(host Host, keyspace string) (Pool, error)
+
+	// run through the connection handshake (get keyspace, username/password)
+	Handshake()
 }
 
 type SimplePoolManager struct {
 	// a pool manager for the simpler days
 }
-
+ 
 func NewSimplePoolManager() *SimplePoolManager {
 	return &SimplePoolManager{}
 }

@@ -109,7 +109,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 				close(inCh)
 				return
 			}
-			log.Print("CassandraCommand:Execute wrote ", wnWritten)
 		}
 		outTrans.Flush() // get rid of it
 
@@ -156,30 +155,7 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 }
 
 func (ce *CassandraCommand) writeError(prot thrift.TProtocol, exc thrift.TException) {
-	// see whihch of the known thrift exception types it was
-	_, isProtExc := exc.(thrift.TProtocolException)
-	appExc, isAppExc := exc.(thrift.TApplicationException)
-	_, isTransExc := exc.(thrift.TTransportException)
-
-	// write the exception header
-	prot.WriteMessageBegin(ce.name, thrift.EXCEPTION, ce.seqId)
-
-	// convert it into an application exception if not already
-	if !isAppExc {
-		if isProtExc {
-			appExc = thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, exc.Error())
-		} else if isTransExc {
-			appExc = thrift.NewTApplicationException(thrift.INTERNAL_ERROR, exc.Error())
-		} else {
-			appExc = thrift.NewTApplicationExceptionMessage(exc.Error())
-		}
-	}
-
-	appExc.Write(prot)
-
-	// finish it 
-	prot.WriteMessageEnd()
-	prot.Transport().Flush()
+	TWriteException(ce.name, ce.seqId, prot, exc)
 }
 
 /*
@@ -243,4 +219,37 @@ func TTransportReadGen(reader io.Reader, name string) <-chan *CommandPacket { //
 		}
 	}()
 	return ch
+}
+
+/*
+ * Write the exception to the protocol.
+ *
+ * Does not assume the protocol's transport is ready for writing (you must prepare this yourself.)
+ * Begins writing, writes the exception, and flushes the protocol's transport.
+ */
+func TWriteException(name string, seqId int32, prot thrift.TProtocol, exc thrift.TException) {
+	// see whihch of the known thrift exception types it was
+	_, isProtExc := exc.(thrift.TProtocolException)
+	appExc, isAppExc := exc.(thrift.TApplicationException)
+	_, isTransExc := exc.(thrift.TTransportException)
+
+	// write the exception header
+	prot.WriteMessageBegin(name, thrift.EXCEPTION, seqId)
+
+	// convert it into an application exception if not already
+	if !isAppExc {
+		if isProtExc {
+			appExc = thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, exc.Error())
+		} else if isTransExc {
+			appExc = thrift.NewTApplicationException(thrift.INTERNAL_ERROR, exc.Error())
+		} else {
+			appExc = thrift.NewTApplicationExceptionMessage(exc.Error())
+		}
+	}
+
+	appExc.Write(prot)
+
+	// finish it 
+	prot.WriteMessageEnd()
+	prot.Transport().Flush()
 }
