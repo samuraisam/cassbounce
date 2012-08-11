@@ -32,8 +32,8 @@ func (c *CommandPacket) Error() error  { return c.err }
  */
 type Command interface {
 	Name() string
-	SeqId() int64
-	TypeId() int32
+	SeqId() int32
+	TypeId() thrift.TMessageType
 
 	/* Execute the `Name()` method for `TypeId()` and `SeqId()` on a remote connection and return
 	 * the results as a bytes buffer.
@@ -41,7 +41,7 @@ type Command interface {
 	 * The returned result is a channel down which the Execute function will stuff CommandPackets
 	 * each of which may have its own error. 
 	 */
-	Execute(inPackets chan<- *CommandPacket, conn Connection, timeout time.Duration) (outPackets chan<- *CommandPacket)
+	Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket)
 }
 
 type CassandraCommand struct {
@@ -70,6 +70,7 @@ func (ce *CassandraCommand) SeqId() int32                { return ce.seqId }
 func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
 	inCh := make(chan *CommandPacket)
 	go func() {
+		defer close(inCh)
 		log.Print("CassandraCommand:Execute executing ", ce.name)
 		// get transport and protocol for the inbound connection
 		inTrans := NewCommandPacketTTransport(inCh)
@@ -87,7 +88,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 			// headProtExc is a thrift.TTException
 			log.Print("CassandraCommand:Execute error sending header to upsteram server: ", headProtExc)
 			ce.writeError(inProt, headProtExc)
-			close(inCh)
 			return
 		}
 
@@ -97,7 +97,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 				// if we got an error, then bail
 				log.Print("CassandraCommand:Execute error reading data from client: ", pkt.Error())
 				ce.writeError(inProt, thrift.NewTProtocolExceptionFromOsError(pkt.Error()))
-				close(inCh)
 				return
 			}
 
@@ -106,7 +105,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 			if wErr != nil {
 				log.Print("CassandraCommand:Execute error writing ", wnWritten, " bytes  to upstream server: ", wErr)
 				ce.writeError(inProt, thrift.NewTTransportExceptionFromOsError(wErr))
-				close(inCh)
 				return
 			}
 		}
@@ -119,7 +117,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 		if oErr != nil {
 			log.Print("CassandraCommand:Execute error reading response header from upstream server: ", oErr)
 			ce.writeError(inProt, oErr)
-			close(inCh)
 			return
 		}
 
@@ -129,7 +126,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 			// received an error writing response header, try and send an error
 			log.Print("CassandraCommand:Execute error writing response header to client: ", iErr)
 			ce.writeError(inProt, iErr)
-			close(inCh)
 			return
 		}
 
@@ -140,7 +136,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 			if pkt.Error() != nil {
 				log.Print("CassandraCommand:Execute error writing response data to client: ", pkt.Error())
 				ce.writeError(inProt, thrift.NewTProtocolExceptionFromOsError(pkt.Error()))
-				close(inCh)
 				return
 			}
 			_, writeErr := inProt.Transport().Write(pkt.Bytes()) // this will ultimately translate into inCh <-pkt
@@ -148,8 +143,6 @@ func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Con
 				log.Print("CassandraCommand:Execute error writing back to client protocol: ", writeErr)
 			}
 		}
-
-		close(inCh) // aaaand we're done
 	}()
 	return inCh
 }

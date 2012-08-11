@@ -1,8 +1,8 @@
 package server
 
-// import (
-// 	"time"
-// )
+import (
+	"fmt"
+)
 
 /*
 The pool - the design of this is as follows
@@ -73,27 +73,39 @@ type LoginReq struct {
 	password string
 }
 
-func NewLoginReq(username, password) *LoginReq {
+func NewLoginReq(username string, password string) *LoginReq {
 	return &LoginReq{username, password}
 }
 
 func (r *LoginReq) Username() string { return r.username }
 func (r *LoginReq) Password() string { return r.password }
+func (r *LoginReq) String() string { return fmt.Sprintf("<LoginReq username=%s>", r.username)}
 
 /* 
  * ConnectionDef - has a keyspace and potentially a login req
  */
- type ConnectionDef struct {
- 	loginReq *LoginReq
- 	keyspace string
- }
-
-func NewConnectionDef(keyspace string, loginReq *LoginReq) *ConnectionDef {
-	return &ConnectionDef{keyspace, loginReq}
+type ConnectionDef struct {
+	keyspace string
+	loginReq *LoginReq
+	dirty bool
 }
 
-func (d *ConnectionDef) LoginReq() LoginReq { return d.loginReq }
-func (d *ConnectionDef) Keyspace() string { retuirn d.keyspace }
+func NewConnectionDef(keyspace string, loginReq *LoginReq) *ConnectionDef {
+	return &ConnectionDef{keyspace, loginReq, false}
+}
+
+func (d *ConnectionDef) LoginReq() *LoginReq { return d.loginReq }
+func (d *ConnectionDef) SetLoginReq(v *LoginReq) { d.dirty = true; d.loginReq = v }
+func (d *ConnectionDef) Keyspace() string { return d.keyspace }
+func (d *ConnectionDef) SetKeyspace(v string) { d.dirty = true; d.keyspace = v }
+func (d *ConnectionDef) Dirty() bool { return d.dirty }
+func (d *ConnectionDef) Equals(x *ConnectionDef) bool {
+	return (
+		d.keyspace == x.Keyspace() && // keyspaces are equal
+		d.loginReq.Password() == x.LoginReq().Password() && // passwords are equal
+		d.loginReq.Username() == x.LoginReq().Username()) // usernames are equal
+}
+func (d *ConnectionDef) String() string { return fmt.Sprintf("<ConnectionDef keyspace=%s login=%s>", d.keyspace, d.loginReq) }
 
 /*
  * Pool - a list of open connections to the outbound service.
@@ -130,9 +142,6 @@ type PoolManager interface {
 
 	// return a Pool for a specific keyspace
 	Get(host Host, keyspace string) (Pool, error)
-
-	// run through the connection handshake (get keyspace, username/password)
-	Handshake()
 }
 
 type SimplePoolManager struct {
