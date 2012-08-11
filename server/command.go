@@ -4,8 +4,8 @@ import (
 	"errors"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"io"
-	"time"
 	"log"
+	"time"
 )
 
 /*
@@ -175,7 +175,7 @@ func (t *CommandPacketTTransport) Read(buf []byte) (int, error) {
 	return 0, errors.New("Can not be read from.")
 }
 func (t *CommandPacketTTransport) Write(buf []byte) (int, error) {
-	t.ch <-NewCommandPacket(buf, len(buf), nil)
+	t.ch <- NewCommandPacket(buf, len(buf), nil)
 	return len(buf), nil
 }
 func (t *CommandPacketTTransport) Flush() error { return nil }

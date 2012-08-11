@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"github.com/carloscm/gossie/src/cassandra"
+	"github.com/pomack/thrift4go/lib/go/src/thrift"
 )
 
 /*
@@ -79,7 +81,15 @@ func NewLoginReq(username string, password string) *LoginReq {
 
 func (r *LoginReq) Username() string { return r.username }
 func (r *LoginReq) Password() string { return r.password }
-func (r *LoginReq) String() string { return fmt.Sprintf("<LoginReq username=%s>", r.username)}
+func (r *LoginReq) String() string   { return fmt.Sprintf("<LoginReq username=%s>", r.username) }
+func (r *LoginReq) GetCassAuthRequest() *cassandra.AuthenticationRequest {
+	creds := thrift.NewTMap(thrift.STRING, thrift.STRING, 2) // key, value, size
+	creds.Set("username", r.Username())
+	creds.Set("password", r.Password())
+	req := cassandra.NewAuthenticationRequest()
+	req.Credentials = creds
+	return req
+}
 
 /* 
  * ConnectionDef - has a keyspace and potentially a login req
@@ -87,25 +97,30 @@ func (r *LoginReq) String() string { return fmt.Sprintf("<LoginReq username=%s>"
 type ConnectionDef struct {
 	keyspace string
 	loginReq *LoginReq
-	dirty bool
+	dirty    bool
 }
 
 func NewConnectionDef(keyspace string, loginReq *LoginReq) *ConnectionDef {
 	return &ConnectionDef{keyspace, loginReq, false}
 }
 
-func (d *ConnectionDef) LoginReq() *LoginReq { return d.loginReq }
+func NewEmptyConnectionDef() *ConnectionDef {
+	return &ConnectionDef{"", NewLoginReq("", ""), false}
+}
+
+func (d *ConnectionDef) LoginReq() *LoginReq     { return d.loginReq }
 func (d *ConnectionDef) SetLoginReq(v *LoginReq) { d.dirty = true; d.loginReq = v }
-func (d *ConnectionDef) Keyspace() string { return d.keyspace }
-func (d *ConnectionDef) SetKeyspace(v string) { d.dirty = true; d.keyspace = v }
-func (d *ConnectionDef) Dirty() bool { return d.dirty }
+func (d *ConnectionDef) Keyspace() string        { return d.keyspace }
+func (d *ConnectionDef) SetKeyspace(v string)    { d.dirty = true; d.keyspace = v }
+func (d *ConnectionDef) Dirty() bool             { return d.dirty }
 func (d *ConnectionDef) Equals(x *ConnectionDef) bool {
-	return (
-		d.keyspace == x.Keyspace() && // keyspaces are equal
+	return (x != nil && d.keyspace == x.Keyspace() && // keyspaces are equal
 		d.loginReq.Password() == x.LoginReq().Password() && // passwords are equal
 		d.loginReq.Username() == x.LoginReq().Username()) // usernames are equal
 }
-func (d *ConnectionDef) String() string { return fmt.Sprintf("<ConnectionDef keyspace=%s login=%s>", d.keyspace, d.loginReq) }
+func (d *ConnectionDef) String() string {
+	return fmt.Sprintf("<ConnectionDef keyspace=%s login=%s>", d.keyspace, d.loginReq)
+}
 
 /*
  * Pool - a list of open connections to the outbound service.
@@ -147,7 +162,7 @@ type PoolManager interface {
 type SimplePoolManager struct {
 	// a pool manager for the simpler days
 }
- 
+
 func NewSimplePoolManager() *SimplePoolManager {
 	return &SimplePoolManager{}
 }

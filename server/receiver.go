@@ -71,16 +71,28 @@ func (r *CommandReceiver) Receive() {
 	// connDef = nil
 
 	for !dead {
-		newConnDef, cmd := r.Handshake() // perform the handshake, this will establish keyspace and login info if needed
+		newConnDef, cmd, err := r.Handshake() // perform the handshake, this will establish keyspace and login info if needed
+
+		// got a connection error, disconnect client
+		if err != nil {
+			dead = true
+			continue
+		}
+
+		// handshake failed, or didn't get a command successfully, not necessary to disconnect client
+		if cmd == nil {
+			continue
+		}
 
 		if connDef == nil || (newConnDef.Dirty() && !connDef.Equals(newConnDef)) {
 			// get a new connection
 			log.Print("Getting a new connection: ", newConnDef)
 			connDef = newConnDef
 			outboundConn.client.SetKeyspace(newConnDef.Keyspace())
+			outboundConn.client.Login(newConnDef.LoginReq().GetCassAuthRequest())
 		}
 
-		res := cmd.Execute(TTransportReadGen(r.transport, "inboundReq"), outboundConn, time.Duration(100) * time.Millisecond)
+		res := cmd.Execute(TTransportReadGen(r.transport, "inboundReq"), outboundConn, time.Duration(100)*time.Millisecond)
 
 		failureWriting := false
 		for pkt := range res {
@@ -115,7 +127,7 @@ func (r *CommandReceiver) Receive() {
  * It will intercept `set_keyspace` and `login` and use those to populate a ConnectionDef if sent by a client
  */
 
-func (r *CommandReceiver) Handshake() (*ConnectionDef, Command) {
+func (r *CommandReceiver) Handshake() (*ConnectionDef, Command, error) {
 	// start reading immediatly; get the header
 	name, typeId, seqId, err := r.protocol.ReadMessageBegin()
 	if err != nil {
@@ -123,15 +135,11 @@ func (r *CommandReceiver) Handshake() (*ConnectionDef, Command) {
 		r.protocol.Skip(thrift.STRUCT)
 		r.protocol.ReadMessageEnd()
 		TWriteException(name, seqId, r.protocol, err)
-		return nil, nil
+		return nil, nil, err
 	}
 
-	// hadLogin := false // whether login was a part of handshaking
-	// var username string // set if hadLogin is true
-	// var password string // set if hadLogin is true
-	// var keyspace string // must be set if handshaking() == true
 	var lastHandhakeStep string // set if handshaking, used to generate useful logging output
-	connDef := &ConnectionDef{}
+	connDef := NewEmptyConnectionDef()
 
 	// if we are handshaking, that is name is either `set_keyspace` or `login` then 
 	for name == "set_keyspace" || name == "login" {
@@ -141,7 +149,7 @@ func (r *CommandReceiver) Handshake() (*ConnectionDef, Command) {
 		proc := cassandra.NewCassandraProcessor(pt)
 
 		// get a processor for the name
-		processor, nameFound := proc.GetProcessorFunction(name) 
+		processor, nameFound := proc.GetProcessorFunction(name)
 
 		if !nameFound || processor == nil {
 			// have no idea what you are tryn'a do son (shouldn't ever get here as we provide the processor)
@@ -149,7 +157,7 @@ func (r *CommandReceiver) Handshake() (*ConnectionDef, Command) {
 			r.protocol.Skip(thrift.STRUCT)
 			r.protocol.ReadMessageEnd()
 			TWriteException(name, seqId, r.protocol, exc)
-			return nil, nil
+			return nil, nil, nil // nil err = did not have a connection error
 		}
 
 		// run it
@@ -157,7 +165,7 @@ func (r *CommandReceiver) Handshake() (*ConnectionDef, Command) {
 		if exc != nil {
 			log.Print("CommandReceiver:Receiver failed to execute function '", name, "': ", exc)
 			TWriteException(name, seqId, r.protocol, exc)
-			return nil, nil
+			return nil, nil, nil // nil err = did not have a connection error
 		}
 
 		if pt.HasLogin() {
@@ -174,14 +182,13 @@ func (r *CommandReceiver) Handshake() (*ConnectionDef, Command) {
 			r.protocol.Skip(thrift.STRUCT)
 			r.protocol.ReadMessageEnd()
 			TWriteException(name, seqId, r.protocol, err)
-			return nil, nil // bail out totally
+			return nil, nil, err // bail out totally
 		}
 	}
 
 	// we are not handshaking, just executing commands
-	return connDef, NewCassandraCommand(name, typeId, seqId)
+	return connDef, NewCassandraCommand(name, typeId, seqId), nil
 }
-
 
 /*
  * A TTransport used to just pass all data written to it into the provided bytes.Buffer
@@ -214,16 +221,15 @@ func (t *PassthroughTransport) Write(buf []byte) (int, error) {
 func (t *PassthroughTransport) Flush() error { return nil }
 func (t *PassthroughTransport) Peek() bool   { return false }
 
-
 /*
  * Pretends to be a CassandraProcessor and intercepts `login` and `set_keyspace`, assigning the values to ourself.
  */
 type LoginAndKeyspaceHijackingProcessor struct {
 	*CassandraPassthrough
-	keyspace string
-	username string
-	password string
-	hasLogin bool
+	keyspace    string
+	username    string
+	password    string
+	hasLogin    bool
 	hasKeyspace bool
 }
 
@@ -231,11 +237,11 @@ func NewLoginAndKeyspaceHijackingProcessor() *LoginAndKeyspaceHijackingProcessor
 	return &LoginAndKeyspaceHijackingProcessor{&CassandraPassthrough{}, "", "", "", false, false}
 }
 
-func (c *LoginAndKeyspaceHijackingProcessor) Keyspace() string { return c.keyspace }
+func (c *LoginAndKeyspaceHijackingProcessor) Keyspace() string  { return c.keyspace }
 func (c *LoginAndKeyspaceHijackingProcessor) HasKeyspace() bool { return c.hasKeyspace }
-func (c *LoginAndKeyspaceHijackingProcessor) HasLogin() bool { return c.hasLogin }
-func (c *LoginAndKeyspaceHijackingProcessor) Username() string { return c.username }
-func (c *LoginAndKeyspaceHijackingProcessor) Password() string { return c.password }
+func (c *LoginAndKeyspaceHijackingProcessor) HasLogin() bool    { return c.hasLogin }
+func (c *LoginAndKeyspaceHijackingProcessor) Username() string  { return c.username }
+func (c *LoginAndKeyspaceHijackingProcessor) Password() string  { return c.password }
 
 /*
  * Overrides the `login` thrift method - it has no usable return value so just return nil
@@ -249,7 +255,7 @@ func (c *LoginAndKeyspaceHijackingProcessor) Login(authReq *cassandra.Authentica
 		c.username = un.(string)
 		c.password = pw.(string)
 	}
-	
+
 	return nil, nil, nil
 }
 
