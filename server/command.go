@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"time"
+	"fmt"
 )
 
 /*
@@ -34,6 +35,7 @@ type Command interface {
 	Name() string
 	SeqId() int32
 	TypeId() thrift.TMessageType
+	TokenHint() *Token
 
 	/* Execute the `Name()` method for `TypeId()` and `SeqId()` on a remote connection and return
 	 * the results as a bytes buffer.
@@ -49,6 +51,12 @@ type CassandraCommand struct {
 	typeId          thrift.TMessageType
 	seqId           int32
 	protocolFactory *thrift.TBinaryProtocolFactory
+	bool didStealBytes
+	stolenBytesTrans *thrift.TTransport
+	stolenPacketsProt *thrift.TProtocol
+	stolenBytesCh chan *CommandPacket
+	bool streamWasSet
+	inPackets <-chan *CommandPacket
 }
 
 func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
@@ -61,13 +69,50 @@ func (ce *CassandraCommand) Name() string                { return ce.name }
 func (ce *CassandraCommand) TypeId() thrift.TMessageType { return ce.typeId }
 func (ce *CassandraCommand) SeqId() int32                { return ce.seqId }
 
+// read forward and determine if this command is something that will have a token
+// eg. `get` or `batch_mutate` with some specific row key
+func (ce *CassandraCommand) TokenHint() (*Token, error) {
+	if !streamWasSet {
+		return nil, errors.New("Can not get token hint if stream has not been set (nothing to read from)")
+	}
+	switch ce.name {
+	case "get":
+	case "get_many":
+	case "batch_mutate":
+	case "get_count":
+		// the command is one of the ones we can get a first key from
+		return ce.scrapeToken()
+		break
+	default:
+		return _, errors.New(fmt.Sprintf("No token can be inferred from the command: ", ce.name))
+	}
+}
+
+func (ce *CassandraCommand) scrapeToken() (*Token, error) {
+	// read forward and get the key, then, build a token for the key
+}
+
+// sets the stream
+func (ce *CassandraCommand) SetStream(inPackets <-chan *CommandPacket) (*Command, error) {
+	if ce.streamWasSet {
+		return _, errors.New("Can not set stream twice")
+	}
+	ce.inPackets = inPackets
+	return ce, nil
+}
+
 /*
  * 1. Begin executing the configured command (name/typeid/seqid) on the upstream server (some random cassandra instance)
  * 2. Stream all remaining inbound data (the rest of the command from some client) to the upstream server
  * 3. Read the response header from the upstream server
  * 4. Read all remaining upstream data and write it to the client via the `inPackets` chan
  */
-func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
+
+func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout, time.Duration) (outPackets <-chan *CommandPacket) {
+	return doExecute(inPackets, outConn, timeout)
+}
+
+func (ce *CassandraCommand) doExecute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
 	inCh := make(chan *CommandPacket)
 	go func() {
 		defer close(inCh)

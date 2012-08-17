@@ -52,18 +52,18 @@ func NewCommandReceiver(conn net.Conn, hostList HostList, poolMan PoolManager) *
  */
 func (r *CommandReceiver) Receive() {
 	// XXX: get a server connection - temporary
-	destinationHost, err := r.hostList.Get()
-	if err != nil {
-		log.Print("XXX: error getting outbound host: ", err)
-		return
-	}
-	outboundConn, err := Dial(destinationHost.String(), "fart", time.Duration(100)*time.Millisecond)
-	if err != nil {
-		log.Print("XXX: Error establishing outbound connection: ", err)
-		return
-	}
+	// destinationHost, err := r.hostList.Get()
+	// if err != nil {
+	// 	log.Print("XXX: error getting outbound host: ", err)
+	// 	return
+	// }
+	// outboundConn, err := Dial(destinationHost.String(), "fart", time.Duration(100)*time.Millisecond)
+	// if err != nil {
+	// 	log.Print("XXX: Error establishing outbound connection: ", err)
+	// 	return
+	// }
 
-	defer func() { r.remoteConn.Close(); outboundConn.Close() }()
+	defer func() { r.remoteConn.Close(); /*outboundConn.Close()*/ }()
 
 	dead := false
 
@@ -88,11 +88,15 @@ func (r *CommandReceiver) Receive() {
 			// get a new connection
 			log.Print("Getting a new connection: ", newConnDef)
 			connDef = newConnDef
-			outboundConn.client.SetKeyspace(newConnDef.Keyspace())
-			outboundConn.client.Login(newConnDef.LoginReq().GetCassAuthRequest())
+			// outboundConn.client.SetKeyspace(newConnDef.Keyspace())
+			// outboundConn.client.Login(newConnDef.LoginReq().GetCassAuthRequest())
 		}
 
-		res := cmd.Execute(TTransportReadGen(r.transport, "inboundReq"), outboundConn, time.Duration(100)*time.Millisecond)
+		// res := cmd.Execute(TTransportReadGen(r.transport, "inboundReq"), outboundConn, time.Duration(100)*time.Millisecond)
+
+		res := <-r.poolManager.Do(connDef, func (conn *Connection) {
+			return cmd.Execute(TTransportReadGen(r.transport, "inboundReq"), conn, time.Duration(100)*time.Millisecond)
+		});
 
 		failureWriting := false
 		for pkt := range res {

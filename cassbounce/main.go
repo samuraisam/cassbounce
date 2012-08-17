@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -14,10 +15,20 @@ const (
 )
 
 var (
-	initialServerList = flag.String("initial-servers", "0.0.0.0:9160", "A list of cassandra nodes to connect to initially.")
+	// server options
+	listenAddress = flag.String("listen-address", "0.0.0.0:9666", "What interface to listen on")
+
+	// host list options
+	initialServerList = flag.String("initial-servers", "0.0.0.0:9160", "A list of cassandra nodes to connect to initially")
 	nodeAutodiscovery = flag.Bool("node-autodiscovery", false, "Whether or not to introspect the ring to discover new nodes")
-	listenAddress     = flag.String("listen-address", "0.0.0.0:9666", "What interface to listen on.")
 	pollServers       = flag.Bool("perform-health-checks", false, "Whether or not to perform health checks on remote hosts")
+
+	// pool options
+	poolRecycleDuration          = flag.Int("pool-recycle-duration", 60, "After this many seconds, the pool may automatically recycle (close) a connection")
+	poolRecycleJitter            = flag.Int("pool-recycle-jitter", 10, "Max jitter to add to recycle proceure so that not all connections are closed at the same time")
+	poolSize                     = flag.Int("pool-size", 10, "Maximum number of connections a pool will open up to a given node")
+	poolConnectionAcquireTimeout = flag.Int("pool-connection-acquire-timeout", 100, "Max number of milliseconds to wait to acquire a connection before retrying or giving up")
+	poolConnectionAcquireRetries = flag.Int("pool-connection-acquire-retries", 2, "Max number of retries to acquire a connection before giving up. (resulting from an error or a timeout)")
 )
 
 func parseInitialServerList(s string) []server.CassandraHost {
@@ -56,6 +67,11 @@ func main() {
 	settings.NodeAutodiscovery = *nodeAutodiscovery
 	settings.ListenAddress = *listenAddress
 	settings.PollServersForever = *pollServers
+	settings.PoolRecycleDuration = time.Duration(*poolRecycleDuration) * time.Second
+	settings.PoolRecycleJitter = *poolRecycleJitter
+	settings.PoolSize = *poolSize
+	settings.PoolConnectionAcquireTimeout = time.Duration(*poolConnectionAcquireTimeout) * time.Millisecond
+	settings.PoolConnectionAcquireRetries = *poolConnectionAcquireRetries
 
 	// global app
 	app := server.GetApp()

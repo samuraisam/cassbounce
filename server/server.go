@@ -2,6 +2,7 @@ package server
 
 import (
 	"log"
+	"time"
 	"net"
 )
 
@@ -10,21 +11,31 @@ import (
  */
 
 type AppSettings struct {
-	InitialServerList  []Host // list of hosts that was passed into the command line
-	NodeAutodiscovery  bool   // whether or not to set the HostList to autodiscover
-	ListenAddress      string // what interface to listen for new clients on
-	ReceiverType       string // what receiver to use (for now, must only be "command")
-	PoolManagerType    string // what pool manager to use (for now, must only be "simple")
-	PollServersForever bool   // whether or not to constantly perform health checks on remote hosts
+	InitialServerList            []Host        // list of hosts that was passed into the command line
+	NodeAutodiscovery            bool          // whether or not to set the HostList to autodiscover
+	ListenAddress                string        // what interface to listen for new clients on
+	ReceiverType                 string        // what receiver to use (for now, must only be "command")
+	PoolManagerType              string        // what pool manager to use (for now, must only be "simple")
+	PollServersForever           bool          // whether or not to constantly perform health checks on remote hosts
+	PoolRecycleDuration          time.Duration // how frequently to recycle connections to upstream hosts
+	PoolRecycleJitter            int           // jitter applied to recycle algorithm so all connections aren't closed at once
+	PoolSize                     int           // maximum number of connections maintained to a given upstream server
+	PoolConnectionAcquireTimeout time.Duration // wait this long to acquire a connection from a pool
+	PoolConnectionAcquireRetries int           // number of times to endure connection aquisition failure before returning error to client
 }
 
 func NewAppSettings() *AppSettings {
 	return &AppSettings{
-		ReceiverType:       "command",
-		PoolManagerType:    "simple",
-		NodeAutodiscovery:  false,
-		ListenAddress:      "0.0.0.0:9160",
-		PollServersForever: false,
+		ReceiverType:                 "command",
+		PoolManagerType:              "simple",
+		NodeAutodiscovery:            false,
+		ListenAddress:                "0.0.0.0:9160",
+		PollServersForever:           false,
+		PoolRecycleDuration:          time.Duration(60) * time.Second,
+		PoolRecycleJitter:            10,
+		PoolSize:                     10,
+		PoolConnectionAcquireTimeout: time.Duration(100) * time.Millisecond,
+		PoolConnectionAcquireRetries: 2,
 	}
 }
 
@@ -77,7 +88,7 @@ func (a *App) poolManager() PoolManager { // lazily load a PoolManager
 
 // listen forever on the interface a.ListenAddress
 func (a *App) Listen() error {
-	listener, err := net.Listen("tcp", a.settings.ListenAddress)
+	listener, err := net.Listen("tcp", a.Settings().ListenAddress)
 	if err != nil {
 		return err
 	}
