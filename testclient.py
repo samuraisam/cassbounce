@@ -16,3 +16,5 @@ while True:
 	value = raw_input("value: ")
 
 	cf.insert(rowkey, {column: value})
+
+	print "get =>" cf.get(rowkey)
