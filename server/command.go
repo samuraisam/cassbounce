@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 	"fmt"
+	"cassbounce/server/cassutils"
 )
 
 /*
@@ -35,7 +36,8 @@ type Command interface {
 	Name() string
 	SeqId() int32
 	TypeId() thrift.TMessageType
-	TokenHint() *Token
+	TokenHint() (*cassutils.Token, error)
+	SetStream(inPackets <-chan *CommandPacket) (error)
 
 	/* Execute the `Name()` method for `TypeId()` and `SeqId()` on a remote connection and return
 	 * the results as a bytes buffer.
@@ -43,7 +45,7 @@ type Command interface {
 	 * The returned result is a channel down which the Execute function will stuff CommandPackets
 	 * each of which may have its own error. 
 	 */
-	Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket)
+	Execute(outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket)
 }
 
 type CassandraCommand struct {
@@ -51,17 +53,17 @@ type CassandraCommand struct {
 	typeId          thrift.TMessageType
 	seqId           int32
 	protocolFactory *thrift.TBinaryProtocolFactory
-	bool didStealBytes
+	didStealBytes bool
 	stolenBytesTrans *thrift.TTransport
 	stolenPacketsProt *thrift.TProtocol
 	stolenBytesCh chan *CommandPacket
-	bool streamWasSet
+	streamWasSet bool
 	inPackets <-chan *CommandPacket
 }
 
 func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
 	protoFac := thrift.NewTBinaryProtocolFactoryDefault()
-	exc := &CassandraCommand{name, typeId, seqId, protoFac}
+	exc := &CassandraCommand{name, typeId, seqId, protoFac, false, nil, nil, nil, false, nil}
 	return exc
 }
 
@@ -71,34 +73,41 @@ func (ce *CassandraCommand) SeqId() int32                { return ce.seqId }
 
 // read forward and determine if this command is something that will have a token
 // eg. `get` or `batch_mutate` with some specific row key
-func (ce *CassandraCommand) TokenHint() (*Token, error) {
-	if !streamWasSet {
+func (ce *CassandraCommand) TokenHint() (*cassutils.Token, error) {
+	if !ce.streamWasSet {
 		return nil, errors.New("Can not get token hint if stream has not been set (nothing to read from)")
 	}
 	switch ce.name {
 	case "get":
-	case "get_many":
-	case "batch_mutate":
+	case "get_slice":
 	case "get_count":
-		// the command is one of the ones we can get a first key from
-		return ce.scrapeToken()
+	case "insert":
+	case "add":
+	case "remove":
+	case "remove_counter":
+		// we will get the key
+		//return cassutils.NewToken(ce.scrapeKey(1))
+		return nil, nil
+		break
+	case "multiget_slice": 
+	case "multiget_count":
+		// we will get the *first* key
+		//return cassutils.NewToken(ce.scrapeFirstKey(1))
+		return nil, nil
 		break
 	default:
-		return _, errors.New(fmt.Sprintf("No token can be inferred from the command: ", ce.name))
+		break
 	}
-}
-
-func (ce *CassandraCommand) scrapeToken() (*Token, error) {
-	// read forward and get the key, then, build a token for the key
+	return nil, errors.New(fmt.Sprintf("No token can be inferred from the command: ", ce.name))
 }
 
 // sets the stream
-func (ce *CassandraCommand) SetStream(inPackets <-chan *CommandPacket) (*Command, error) {
+func (ce *CassandraCommand) SetStream(inPackets <-chan *CommandPacket) (error) {
 	if ce.streamWasSet {
-		return _, errors.New("Can not set stream twice")
+		return errors.New("Can not set stream twice")
 	}
 	ce.inPackets = inPackets
-	return ce, nil
+	return nil
 }
 
 /*
@@ -108,11 +117,11 @@ func (ce *CassandraCommand) SetStream(inPackets <-chan *CommandPacket) (*Command
  * 4. Read all remaining upstream data and write it to the client via the `inPackets` chan
  */
 
-func (ce *CassandraCommand) Execute(inPackets <-chan *CommandPacket, outConn Connection, timeout, time.Duration) (outPackets <-chan *CommandPacket) {
-	return doExecute(inPackets, outConn, timeout)
+func (ce *CassandraCommand) Execute(outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
+	return ce.doExecute(outConn, timeout)
 }
 
-func (ce *CassandraCommand) doExecute(inPackets <-chan *CommandPacket, outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
+func (ce *CassandraCommand) doExecute(outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
 	inCh := make(chan *CommandPacket)
 	go func() {
 		defer close(inCh)
@@ -137,7 +146,7 @@ func (ce *CassandraCommand) doExecute(inPackets <-chan *CommandPacket, outConn C
 		}
 
 		// write all of our inbound packets to the upstream server
-		for pkt := range inPackets {
+		for pkt := range ce.inPackets {
 			if pkt.Error() != nil {
 				// if we got an error, then bail
 				log.Print("CassandraCommand:Execute error reading data from client: ", pkt.Error())

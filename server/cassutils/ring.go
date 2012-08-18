@@ -1,4 +1,8 @@
-package cassandra
+package cassutils
+
+var (
+	Fart = ""
+)
 
 /*
 
