@@ -17,4 +17,4 @@ while True:
 
 	cf.insert(rowkey, {column: value})
 
-	print "get =>" cf.get(rowkey)
+	print "get =>", cf.get(rowkey)

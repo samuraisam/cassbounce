@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"time"
+	"cassbounce/server/cassutils"
 )
 
 type Receiver interface {
@@ -154,7 +155,7 @@ func (r *CommandReceiver) Handshake() (*ConnectionDef, Command, error) {
 	for name == "set_keyspace" || name == "login" {
 		lastHandhakeStep = name
 		// set up the passthrough processor
-		pt := NewLoginAndKeyspaceHijackingProcessor()
+		pt := NewLoginAndKeyspaceHijackingHandler()
 		proc := cassandra.NewCassandraProcessor(pt)
 
 		// get a processor for the name
@@ -231,10 +232,11 @@ func (t *PassthroughTransport) Flush() error { return nil }
 func (t *PassthroughTransport) Peek() bool   { return false }
 
 /*
- * Pretends to be a CassandraProcessor and intercepts `login` and `set_keyspace`, assigning the values to ourself.
- */
-type LoginAndKeyspaceHijackingProcessor struct {
-	*CassandraPassthrough
+LoginAndKeyspaceHijackingHandler pretends to be a CassandraProcessor and intercepts `login` and `set_keyspace`, 
+assigning the values to itself.
+*/
+type LoginAndKeyspaceHijackingHandler struct {
+	*cassutils.PassthroughHandler
 	keyspace    string
 	username    string
 	password    string
@@ -242,20 +244,20 @@ type LoginAndKeyspaceHijackingProcessor struct {
 	hasKeyspace bool
 }
 
-func NewLoginAndKeyspaceHijackingProcessor() *LoginAndKeyspaceHijackingProcessor {
-	return &LoginAndKeyspaceHijackingProcessor{&CassandraPassthrough{}, "", "", "", false, false}
+func NewLoginAndKeyspaceHijackingHandler() *LoginAndKeyspaceHijackingHandler {
+	return &LoginAndKeyspaceHijackingHandler{&cassutils.PassthroughHandler{}, "", "", "", false, false}
 }
 
-func (c *LoginAndKeyspaceHijackingProcessor) Keyspace() string  { return c.keyspace }
-func (c *LoginAndKeyspaceHijackingProcessor) HasKeyspace() bool { return c.hasKeyspace }
-func (c *LoginAndKeyspaceHijackingProcessor) HasLogin() bool    { return c.hasLogin }
-func (c *LoginAndKeyspaceHijackingProcessor) Username() string  { return c.username }
-func (c *LoginAndKeyspaceHijackingProcessor) Password() string  { return c.password }
+func (c *LoginAndKeyspaceHijackingHandler) Keyspace() string  { return c.keyspace }
+func (c *LoginAndKeyspaceHijackingHandler) HasKeyspace() bool { return c.hasKeyspace }
+func (c *LoginAndKeyspaceHijackingHandler) HasLogin() bool    { return c.hasLogin }
+func (c *LoginAndKeyspaceHijackingHandler) Username() string  { return c.username }
+func (c *LoginAndKeyspaceHijackingHandler) Password() string  { return c.password }
 
 /*
  * Overrides the `login` thrift method - it has no usable return value so just return nil
  */
-func (c *LoginAndKeyspaceHijackingProcessor) Login(authReq *cassandra.AuthenticationRequest) (*cassandra.AuthenticationException, *cassandra.AuthorizationException, error) {
+func (c *LoginAndKeyspaceHijackingHandler) Login(authReq *cassandra.AuthenticationRequest) (*cassandra.AuthenticationException, *cassandra.AuthorizationException, error) {
 	un, uer := authReq.Credentials.Get("username")
 	pw, per := authReq.Credentials.Get("password")
 
@@ -271,7 +273,7 @@ func (c *LoginAndKeyspaceHijackingProcessor) Login(authReq *cassandra.Authentica
 /*
  * Overrides the `set_keyspace` thrift method - it has no usable return value, so just return nil
  */
-func (c *LoginAndKeyspaceHijackingProcessor) SetKeyspace(keyspace string) (*cassandra.InvalidRequestException, error) {
+func (c *LoginAndKeyspaceHijackingHandler) SetKeyspace(keyspace string) (*cassandra.InvalidRequestException, error) {
 	c.hasKeyspace = true
 	c.keyspace = keyspace
 	return nil, nil

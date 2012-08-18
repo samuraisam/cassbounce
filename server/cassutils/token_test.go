@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// just make sure that this works
 func Test_Token_Basic(t *testing.T) {
 	b := []byte("fartymcfartyfart")
 	tok := NewToken(b)

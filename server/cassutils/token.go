@@ -24,10 +24,12 @@ func NewToken(key []byte) *Token {
 
 // Get the Token on the ring
 func (t *Token) Token() *big.Int { return t.tok }
+
 // Get the key that this Token was created with
 func (t *Token) Key() []byte { return t.key }
+
 // Get the hashed version of the key - same a org.apache.cassandra.dht.RandomPartitioner would do
-// - it takee the MD5 hash of the key bytes
+// - RandomPartitioner uses the MD5 of the bytes of the key to place the token somewhere on the ring
 func (t *Token) Hash() []byte {
 	if t.hcache == nil { // cache the value of this
 		h := md5.New()
