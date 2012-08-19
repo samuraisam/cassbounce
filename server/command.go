@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 	"fmt"
+	"bytes"
 	"cassbounce/server/cassutils"
 )
 
@@ -37,7 +38,7 @@ type Command interface {
 	SeqId() int32
 	TypeId() thrift.TMessageType
 	TokenHint() (*cassutils.Token, error)
-	SetStream(inPackets <-chan *CommandPacket) (error)
+	SetStream(inPackets chan *CommandPacket) (error)
 
 	/* Execute the `Name()` method for `TypeId()` and `SeqId()` on a remote connection and return
 	 * the results as a bytes buffer.
@@ -58,7 +59,7 @@ type CassandraCommand struct {
 	stolenPacketsProt *thrift.TProtocol
 	stolenBytesCh chan *CommandPacket
 	streamWasSet bool
-	inPackets <-chan *CommandPacket
+	inPackets chan *CommandPacket
 }
 
 func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
@@ -102,7 +103,7 @@ func (ce *CassandraCommand) TokenHint() (*cassutils.Token, error) {
 }
 
 // sets the stream
-func (ce *CassandraCommand) SetStream(inPackets <-chan *CommandPacket) (error) {
+func (ce *CassandraCommand) SetStream(inPackets chan *CommandPacket) (error) {
 	if ce.streamWasSet {
 		return errors.New("Can not set stream twice")
 	}
@@ -129,6 +130,14 @@ func (ce *CassandraCommand) doExecute(outConn Connection, timeout time.Duration)
 		// get transport and protocol for the inbound connection
 		inTrans := NewCommandPacketTTransport(inCh)
 		inProt := ce.protocolFactory.GetProtocol(inTrans)
+
+		if ce.name == "get_slice" {
+			rp, _ := cassutils.NewArgsRetainingProcessor(ce.name)
+			succ, exc := rp.ReadArgs(ce.protocolFactory.GetProtocol(NewCommandPacketTTransport(ce.inPackets)))
+			if !succ {
+				log.Print("XXX: error reading args: ", exc)
+			}
+		}
 
 		// get transport and protocol for the upstream connection
 		outTrans := outConn.Transport()
@@ -206,27 +215,41 @@ func (ce *CassandraCommand) writeError(prot thrift.TProtocol, exc thrift.TExcept
 }
 
 /*
- * A TTransport used to just pass all data written to the outbound channel
- * 
- * This protocol should not be used to send any data to and from a client - it is explicitly for internal
- * communications only. 
+A TTransport used to just pass all data written to the outbound channel
+
+This protocol should not be used to send any data to and from a client - it is explicitly for internal
+communications only. 
  */
 type CommandPacketTTransport struct {
-	ch chan<- *CommandPacket // write only yo
+	ch chan *CommandPacket
+	readBuffer *bytes.Buffer
 }
 
-func NewCommandPacketTTransport(ch chan<- *CommandPacket) *CommandPacketTTransport {
-	return &CommandPacketTTransport{ch}
+func NewCommandPacketTTransport(ch chan *CommandPacket) *CommandPacketTTransport {
+	return &CommandPacketTTransport{ch, &bytes.Buffer{}}
 }
 
 func (t *CommandPacketTTransport) IsOpen() bool { return true }
 func (t *CommandPacketTTransport) Open() error  { return nil }
 func (t *CommandPacketTTransport) Close() error { return nil }
-func (t *CommandPacketTTransport) ReadAll(buf []byte) (int, error) {
-	return 0, errors.New("Can not be read from.")
-}
 func (t *CommandPacketTTransport) Read(buf []byte) (int, error) {
-	return 0, errors.New("Can not be read from.")
+	if t.readBuffer.Len() > 0 {
+		got, err := t.readBuffer.Read(buf)
+		if got > 0 {
+ 			return got, err
+		}
+	}
+	if cp, ok := <-t.ch; !ok {
+		t.readBuffer = &bytes.Buffer{}
+	} else {
+		t.readBuffer = bytes.NewBuffer(cp.Bytes())
+	}
+	got, err := t.readBuffer.Read(buf)
+	return got, err
+}
+
+func (t *CommandPacketTTransport) ReadAll(buf []byte) (int, error) {
+	return thrift.ReadAllTransport(t, buf)
 }
 func (t *CommandPacketTTransport) Write(buf []byte) (int, error) {
 	t.ch <- NewCommandPacket(buf, len(buf), nil)
@@ -238,7 +261,7 @@ func (t *CommandPacketTTransport) Peek() bool   { return false }
 /*
  * Read all bytes from `reader` and pass them and any errors as *CommandPackets to a returned channel
  */
-func TTransportReadGen(reader io.Reader, name string) <-chan *CommandPacket { // TODO: add timeout
+func TTransportReadGen(reader io.Reader, name string) chan *CommandPacket { // TODO: add timeout
 	ch := make(chan *CommandPacket)
 	go func() {
 		b := make([]byte, 1024)

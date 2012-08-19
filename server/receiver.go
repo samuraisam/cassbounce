@@ -84,7 +84,13 @@ func (r *CommandReceiver) Receive() {
 		if cmd == nil {
 			continue
 		}
-
+		// if cmd.Name() == "get_slice" {
+		// 	rp, _ := cassutils.NewArgsRetainingProcessor(cmd.Name())
+		// 	succ, exc := rp.ReadArgs(r.protocol)
+		// 	if !succ {
+		// 		log.Print("XXX: error reading args: ", exc)
+		// 	}
+		// }
 		if connDef == nil || (newConnDef.Dirty() && !connDef.Equals(newConnDef)) {
 			// get a new connection
 			log.Print("Getting a new connection: ", newConnDef)
