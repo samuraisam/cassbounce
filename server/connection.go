@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"time"
+	"cassbounce/server/thriftutils"
 )
 
 type Connection interface {
@@ -19,7 +20,7 @@ type Connection interface {
 
 type CassConnection struct {
 	socket          *thrift.TNonblockingSocket
-	transport       *thrift.TFramedTransport
+	transport       thrift.TTransport
 	client          *cassandra.CassandraClient
 	node            string
 	keyspace        string
@@ -47,7 +48,7 @@ func Dial(node string, keyspace string, timeout time.Duration) (*CassConnection,
 	sock.SetTimeout(int64(timeout))
 
 	// build the client
-	transport := thrift.NewTFramedTransport(sock)
+	transport := thriftutils.NewTFramedTransport(sock)
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
 	cli := cassandra.NewCassandraClientFactory(transport, protocolFactory)
 

@@ -11,8 +11,9 @@ cf = pycassa.ColumnFamily(pool, 'farts')
 
 print list(cf.get_range())
 k = uuid.uuid1().hex
-cf.insert(k, {uuid.uuid1().hex: uuid.uuid4().hex})
-print "get =>", cf.get(k)
+for i in xrange(200):
+	cf.insert(k, {uuid.uuid1().hex: uuid.uuid4().hex})
+	print "get =>", cf.get(k)
 
 # while True:
 # 	rowkey = raw_input("key: ")

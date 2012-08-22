@@ -131,47 +131,56 @@ func (ce *CassandraCommand) doExecute(outConn Connection, timeout time.Duration)
 		inTrans := NewCommandPacketTTransport(inCh)
 		inProt := ce.protocolFactory.GetProtocol(inTrans)
 
+		// get transport and protocol for the upstream connection
+		outTrans := outConn.Transport()
+		outProt := outConn.ProtocolFactory().GetProtocol(outTrans)
+
 		if ce.name == "get_slice" {
 			rp, _ := cassutils.NewArgsRetainingProcessor(ce.name)
 			succ, exc := rp.ReadArgs(ce.protocolFactory.GetProtocol(NewCommandPacketTTransport(ce.inPackets)))
 			if !succ {
 				log.Print("XXX: error reading args: ", exc)
+			} else {
+				le := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
+				log.Print("XXX: le: ", le)
+				s, e, r := rp.WriteArgs(outProt)
+				log.Print("XXX: s, e r: ", s, ", ", ", ", e, ", ", r)
+				//fe := outProt.WriteMessageEnd()
+				//log.Print("XXX: fe: ", fe)
+				fl := outProt.Transport().Flush()
+				log.Print("XXX: fl: ", fl)
 			}
-		}
+		} else {
+			// write our inbound command header to the upstream connection
+			headProtExc := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
 
-		// get transport and protocol for the upstream connection
-		outTrans := outConn.Transport()
-		outProt := outConn.ProtocolFactory().GetProtocol(outTrans)
-
-		// write our inbound command header to the upstream connection
-		headProtExc := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
-
-		// respond to errors from writing the command header
-		if headProtExc != nil {
-			// headProtExc is a thrift.TTException
-			log.Print("CassandraCommand:Execute error sending header to upsteram server: ", headProtExc)
-			ce.writeError(inProt, headProtExc)
-			return
-		}
-
-		// write all of our inbound packets to the upstream server
-		for pkt := range ce.inPackets {
-			if pkt.Error() != nil {
-				// if we got an error, then bail
-				log.Print("CassandraCommand:Execute error reading data from client: ", pkt.Error())
-				ce.writeError(inProt, thrift.NewTProtocolExceptionFromOsError(pkt.Error()))
+			// respond to errors from writing the command header
+			if headProtExc != nil {
+				// headProtExc is a thrift.TTException
+				log.Print("CassandraCommand:Execute error sending header to upsteram server: ", headProtExc)
+				ce.writeError(inProt, headProtExc)
 				return
 			}
 
-			// pass on our inbound input to the upstream server
-			wnWritten, wErr := outTrans.Write(pkt.Bytes())
-			if wErr != nil {
-				log.Print("CassandraCommand:Execute error writing ", wnWritten, " bytes  to upstream server: ", wErr)
-				ce.writeError(inProt, thrift.NewTTransportExceptionFromOsError(wErr))
-				return
+			// write all of our inbound packets to the upstream server
+			for pkt := range ce.inPackets {
+				if pkt.Error() != nil {
+					// if we got an error, then bail
+					log.Print("CassandraCommand:Execute error reading data from client: ", pkt.Error())
+					ce.writeError(inProt, thrift.NewTProtocolExceptionFromOsError(pkt.Error()))
+					return
+				}
+
+				// pass on our inbound input to the upstream server
+				wnWritten, wErr := outTrans.Write(pkt.Bytes())
+				if wErr != nil {
+					log.Print("CassandraCommand:Execute error writing ", wnWritten, " bytes  to upstream server: ", wErr)
+					ce.writeError(inProt, thrift.NewTTransportExceptionFromOsError(wErr))
+					return
+				}
 			}
+			outTrans.Flush() // get rid of it
 		}
-		outTrans.Flush() // get rid of it
 
 		// start reading a connection, block until it's ready
 		oName, oTypId, oSeqId, oErr := outProt.ReadMessageBegin()
@@ -271,17 +280,32 @@ func TTransportReadGen(reader io.Reader, name string) chan *CommandPacket { // T
 			res := make([]byte, n)
 			doBreak := err != nil
 			totalBytesRead += n
+			log.Print("XXX: transportreadgen: ", name, " ", n, totalBytesRead, " err: ", err)
 			if n > 0 {
 				// yay, a response! copy it so the underlying array reference is not passed along
 				copy(res, b[:n])
-				// check if thrift is done sending us data
-				if thrift.TType(b[n]) == thrift.STOP {
-					doBreak = true // thrift wants us to bail
+				idx := len(res)-1
+				lastIs := thrift.TType(res[idx])
+				//log.Print("XXX: contains ", bytes.Contains(res, []byte{0}))
+				//log.Print("XXX: lastis ", lastIs, " ", string(res[idx]))
+				if lastIs == thrift.STOP {
+					doBreak = true
 				}
+				// check if thrift is done sending us data
+				//if thrift.TType(b[len(b)-1]).Compare(thrift.STOP) {
+				//	doBreak = true // thrift wants us to bail
+				//}
+			} else {
+				doBreak = true
 			}
 			// send the packet, with or without error - consumers should cease to read if an error is encountered
+			
 			ch <- NewCommandPacket(res, n, err)
 			if doBreak {
+				if n == len(b) {
+					// we read to the end of the buffer, try reading another
+					continue
+				}
 				// exit when an error is encountered
 				close(ch)
 				break

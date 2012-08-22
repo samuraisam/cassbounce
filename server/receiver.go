@@ -10,6 +10,7 @@ import (
 	"net"
 	"time"
 	"cassbounce/server/cassutils"
+	"cassbounce/server/thriftutils"
 )
 
 type Receiver interface {
@@ -27,13 +28,13 @@ type CommandReceiver struct {
 	hostList   HostList
 	poolMan    PoolManager
 	tsocket    *thrift.TNonblockingSocket
-	transport  *thrift.TFramedTransport
+	transport  thrift.TTransport
 	protocol   thrift.TProtocol
 }
 
 func NewCommandReceiver(conn net.Conn, hostList HostList, poolMan PoolManager) *CommandReceiver {
 	sock, _ := thrift.NewTNonblockingSocketConn(conn) // err is always nil, so just ignore it
-	trans := thrift.NewTFramedTransport(sock)
+	trans := thriftutils.NewTFramedTransport(sock)
 	protoFac := thrift.NewTBinaryProtocolFactoryDefault()
 	prot := protoFac.GetProtocol(trans)
 

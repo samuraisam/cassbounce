@@ -102,6 +102,7 @@ func (p *ArgsRetainingProcessor) WriteArgs(oprot thrift.TProtocol) (success bool
 	}
 	writeArgs := []reflect.Value{reflect.ValueOf(p.args), reflect.ValueOf(oprot)}
 	ret := meth.Func.Call(writeArgs)
+	log.Print("XXX: args Write ret: ", ret)
 	if !ret[0].IsNil() {
 		// try casting it to the actual TProtocolException
 		concreteExc, ok := ret[0].Interface().(thrift.TProtocolException)
