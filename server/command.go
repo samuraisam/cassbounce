@@ -1,14 +1,14 @@
 package server
 
 import (
+	"bytes"
+	"cassbounce/server/cassutils"
 	"errors"
+	"fmt"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"io"
 	"log"
 	"time"
-	"fmt"
-	"bytes"
-	"cassbounce/server/cassutils"
 )
 
 /*
@@ -38,7 +38,7 @@ type Command interface {
 	SeqId() int32
 	TypeId() thrift.TMessageType
 	TokenHint() (*cassutils.Token, error)
-	SetStream(inPackets chan *CommandPacket) (error)
+	SetStream(inPackets chan *CommandPacket) error
 
 	/* Execute the `Name()` method for `TypeId()` and `SeqId()` on a remote connection and return
 	 * the results as a bytes buffer.
@@ -50,16 +50,16 @@ type Command interface {
 }
 
 type CassandraCommand struct {
-	name            string
-	typeId          thrift.TMessageType
-	seqId           int32
-	protocolFactory *thrift.TBinaryProtocolFactory
-	didStealBytes bool
-	stolenBytesTrans *thrift.TTransport
+	name              string
+	typeId            thrift.TMessageType
+	seqId             int32
+	protocolFactory   *thrift.TBinaryProtocolFactory
+	didStealBytes     bool
+	stolenBytesTrans  *thrift.TTransport
 	stolenPacketsProt *thrift.TProtocol
-	stolenBytesCh chan *CommandPacket
-	streamWasSet bool
-	inPackets chan *CommandPacket
+	stolenBytesCh     chan *CommandPacket
+	streamWasSet      bool
+	inPackets         chan *CommandPacket
 }
 
 func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
@@ -90,7 +90,7 @@ func (ce *CassandraCommand) TokenHint() (*cassutils.Token, error) {
 		//return cassutils.NewToken(ce.scrapeKey(1))
 		return nil, nil
 		break
-	case "multiget_slice": 
+	case "multiget_slice":
 	case "multiget_count":
 		// we will get the *first* key
 		//return cassutils.NewToken(ce.scrapeFirstKey(1))
@@ -103,7 +103,7 @@ func (ce *CassandraCommand) TokenHint() (*cassutils.Token, error) {
 }
 
 // sets the stream
-func (ce *CassandraCommand) SetStream(inPackets chan *CommandPacket) (error) {
+func (ce *CassandraCommand) SetStream(inPackets chan *CommandPacket) error {
 	if ce.streamWasSet {
 		return errors.New("Can not set stream twice")
 	}
@@ -228,9 +228,9 @@ A TTransport used to just pass all data written to the outbound channel
 
 This protocol should not be used to send any data to and from a client - it is explicitly for internal
 communications only. 
- */
+*/
 type CommandPacketTTransport struct {
-	ch chan *CommandPacket
+	ch         chan *CommandPacket
 	readBuffer *bytes.Buffer
 }
 
@@ -245,7 +245,7 @@ func (t *CommandPacketTTransport) Read(buf []byte) (int, error) {
 	if t.readBuffer.Len() > 0 {
 		got, err := t.readBuffer.Read(buf)
 		if got > 0 {
- 			return got, err
+			return got, err
 		}
 	}
 	if cp, ok := <-t.ch; !ok {
@@ -284,7 +284,7 @@ func TTransportReadGen(reader io.Reader, name string) chan *CommandPacket { // T
 			if n > 0 {
 				// yay, a response! copy it so the underlying array reference is not passed along
 				copy(res, b[:n])
-				idx := len(res)-1
+				idx := len(res) - 1
 				lastIs := thrift.TType(res[idx])
 				//log.Print("XXX: contains ", bytes.Contains(res, []byte{0}))
 				//log.Print("XXX: lastis ", lastIs, " ", string(res[idx]))
@@ -299,7 +299,7 @@ func TTransportReadGen(reader io.Reader, name string) chan *CommandPacket { // T
 				doBreak = true
 			}
 			// send the packet, with or without error - consumers should cease to read if an error is encountered
-			
+
 			ch <- NewCommandPacket(res, n, err)
 			if doBreak {
 				if n == len(b) {

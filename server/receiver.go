@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"cassbounce/server/cassutils"
+	"cassbounce/server/thriftutils"
 	"errors"
 	"fmt"
 	"github.com/carloscm/gossie/src/cassandra"
@@ -9,8 +11,6 @@ import (
 	"log"
 	"net"
 	"time"
-	"cassbounce/server/cassutils"
-	"cassbounce/server/thriftutils"
 )
 
 type Receiver interface {

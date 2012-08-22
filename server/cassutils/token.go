@@ -1,15 +1,15 @@
 package cassutils
 
 import (
-	"math/big"
 	"crypto/md5"
 	"fmt"
+	"math/big"
 )
 
 // Token is some token on a ring
 type Token struct {
-	key []byte
-	tok *big.Int
+	key    []byte
+	tok    *big.Int
 	hcache []byte
 }
 

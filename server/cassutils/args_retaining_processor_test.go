@@ -1,9 +1,9 @@
 package cassutils
 
 import (
-	"testing"
 	"github.com/carloscm/gossie/src/cassandra"
 	"reflect"
+	"testing"
 )
 
 func Test_CassThing(t *testing.T) {
@@ -12,7 +12,7 @@ func Test_CassThing(t *testing.T) {
 }
 
 func Test_ConstructorMap(t *testing.T) {
-	fnMap := make(map[string]func()interface{})
+	fnMap := make(map[string]func() interface{})
 	fnMap["get"] = func() interface{} { return cassandra.NewGetArgs() }
 
 	rv := fnMap["get"]()

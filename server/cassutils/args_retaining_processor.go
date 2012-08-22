@@ -1,17 +1,17 @@
 package cassutils
 
 import (
+	"errors"
 	"github.com/carloscm/gossie/src/cassandra"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
-	"errors"
-	"reflect"
 	"log"
+	"reflect"
 )
 
 var (
 	// A generalized map of constructors that build argument structs for the cassandra thrift bindings eg NewGetArgs
 	// it maps `"thrift_name"=>func() interface{}`
-	ConstructorMap map[string]func()interface{}
+	ConstructorMap map[string]func() interface{}
 	// Returned by NewArgsRetainingProcessor when trying to initialize it for an unknown constructor
 	ErrUnknownArgsConstructor = errors.New("That args constructor is not known.")
 	// Returned by methods on ArgsRetainingProcessor that expect args but it doesn't have them yet
@@ -19,16 +19,16 @@ var (
 )
 
 func init() {
-	ConstructorMap = make(map[string]func()interface{})
+	ConstructorMap = make(map[string]func() interface{})
 	ConstructorMap["get"] = func() interface{} { return cassandra.NewGetArgs() }
 	ConstructorMap["get_slice"] = func() interface{} { return cassandra.NewGetSliceArgs() }
 }
 
 type ArgsRetainingProcessor struct {
-	name string
-	constructor func() interface{}
-	gotArgs bool
-	args interface{}
+	name         string
+	constructor  func() interface{}
+	gotArgs      bool
+	args         interface{}
 	argsTypCache reflect.Type
 }
 
@@ -119,4 +119,3 @@ func (p *ArgsRetainingProcessor) WriteArgs(oprot thrift.TProtocol) (success bool
 }
 
 // Get a value from the processed args
-

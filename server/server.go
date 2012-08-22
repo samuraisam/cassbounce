@@ -2,8 +2,8 @@ package server
 
 import (
 	"log"
-	"time"
 	"net"
+	"time"
 )
 
 /*

@@ -1,13 +1,13 @@
 package server
 
 import (
+	"cassbounce/server/thriftutils"
 	"errors"
 	"github.com/carloscm/gossie/src/cassandra"
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"log"
 	"net"
 	"time"
-	"cassbounce/server/thriftutils"
 )
 
 type Connection interface {

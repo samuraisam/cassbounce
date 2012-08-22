@@ -1,8 +1,8 @@
 package cassutils
 
 import (
-	"testing"
 	"fmt"
+	"testing"
 )
 
 // just make sure that this works
