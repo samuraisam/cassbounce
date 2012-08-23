@@ -92,7 +92,7 @@ func (p *TFramedTransport) Flush() error {
 	if size > 0 {
 		n, err := p.writeBuffer.WriteTo(p.transport)
 		if err != nil {
-			println("Error while flushing write buffer of size ", size, " to transport, only wrote ", n, " bytes: ", err.Error(), "\n")
+			println("Error while flushing write buffer of size ", size, " to transport, only wrote ", n, " bytes: ", err.Error())
 			return thrift.NewTTransportExceptionFromOsError(err)
 		}
 	}

@@ -113,7 +113,7 @@ func (ce *CassandraCommand) TokenHint() (*cassutils.Token, error) {
 	default:
 		break
 	}
-	return nil, errors.New(fmt.Sprintf("No token can be inferred from the command: ", ce.name))
+	return nil, errors.New(fmt.Sprintf("No token can be inferred from the command: %s", ce.name))
 }
 
 // sets the stream
@@ -312,7 +312,7 @@ func TTransportReadGen(reader io.Reader, name string) chan *CommandPacket { // T
 			res := make([]byte, n)
 			doBreak := err != nil
 			totalBytesRead += n
-			log.Print("XXX: transportreadgen: ", name, " ", n, totalBytesRead, " err: ", err)
+			// log.Print("XXX: transportreadgen: ", name, " ", n, totalBytesRead, " err: ", err)
 			if n > 0 {
 				// yay, a response! copy it so the underlying array reference is not passed along
 				copy(res, b[:n])
