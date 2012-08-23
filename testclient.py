@@ -11,7 +11,7 @@ cf = pycassa.ColumnFamily(pool, 'farts')
 
 print list(cf.get_range())
 k = uuid.uuid1().hex
-for i in xrange(200):
+for i in xrange(1):
 	cf.insert(k, {uuid.uuid1().hex: uuid.uuid4().hex})
 	print "get =>", cf.get(k)
 

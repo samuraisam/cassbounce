@@ -91,6 +91,13 @@ func (r *CommandReceiver) Receive() {
 		// 	if !succ {
 		// 		log.Print("XXX: error reading args: ", exc)
 		// 	}
+		// 	klol, kerr := rp.GetArgBytes("key")
+		// 	log.Print("XXX: got arg: ", string(klol), " err: ", kerr)
+		// 	oprot := outboundConn.ProtocolFactory().GetProtocol(outboundConn.Transport())
+		// 	succ, exc, err = rp.WriteArgs(oprot)
+		// 	if !succ {
+		// 		log.Print("XXX: error writing args: ", exc, " ", err)
+		// 	}
 		// }
 		if connDef == nil || (newConnDef.Dirty() && !connDef.Equals(newConnDef)) {
 			// get a new connection

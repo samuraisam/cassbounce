@@ -11,17 +11,25 @@ import (
 var (
 	// A generalized map of constructors that build argument structs for the cassandra thrift bindings eg NewGetArgs
 	// it maps `"thrift_name"=>func() interface{}`
-	ConstructorMap map[string]func() interface{}
+	constructorMap map[string]func() interface{}
+
 	// Returned by NewArgsRetainingProcessor when trying to initialize it for an unknown constructor
 	ErrUnknownArgsConstructor = errors.New("That args constructor is not known.")
+
 	// Returned by methods on ArgsRetainingProcessor that expect args but it doesn't have them yet
 	ErrNoArgs = errors.New("Need to have successfully executed ReadArgs before getting here")
+
+	// Happens when asking for a field that could not be found
+	ErrUnknownField = errors.New("Unknown field name")
+
+	// Happens when asking for a field but using the wrong getter (wrong type)
+	ErrWrongType = errors.New("Wrong type for field name")
 )
 
 func init() {
-	ConstructorMap = make(map[string]func() interface{})
-	ConstructorMap["get"] = func() interface{} { return cassandra.NewGetArgs() }
-	ConstructorMap["get_slice"] = func() interface{} { return cassandra.NewGetSliceArgs() }
+	constructorMap = make(map[string]func() interface{})
+	constructorMap["get"] = func() interface{} { return cassandra.NewGetArgs() }
+	constructorMap["get_slice"] = func() interface{} { return cassandra.NewGetSliceArgs() }
 }
 
 type ArgsRetainingProcessor struct {
@@ -33,7 +41,7 @@ type ArgsRetainingProcessor struct {
 }
 
 func NewArgsRetainingProcessor(name string) (*ArgsRetainingProcessor, error) {
-	f, exists := ConstructorMap[name]
+	f, exists := constructorMap[name]
 	if !exists {
 		return nil, ErrUnknownArgsConstructor
 	}
@@ -82,7 +90,7 @@ func (p *ArgsRetainingProcessor) ReadArgs(iprot thrift.TProtocol) (success bool,
 
 func (p *ArgsRetainingProcessor) argsTyp() reflect.Type {
 	if p.argsTypCache == nil {
-		p.argsTypCache = reflect.TypeOf(p.args)
+		p.argsTypCache = reflect.TypeOf(p.args).Elem()
 	}
 	return p.argsTypCache
 }
@@ -97,7 +105,7 @@ func (p *ArgsRetainingProcessor) WriteArgs(oprot thrift.TProtocol) (success bool
 	typ := p.argsTyp()
 	meth, isValid := typ.MethodByName("Write")
 	if !isValid {
-		log.Print("ArgsRetainingProcessor:WriteArgs")
+		log.Print("ArgsRetainingProcessor:WriteArgs invalid method by name: `Write`")
 		return
 	}
 	writeArgs := []reflect.Value{reflect.ValueOf(p.args), reflect.ValueOf(oprot)}
@@ -118,4 +126,39 @@ func (p *ArgsRetainingProcessor) WriteArgs(oprot thrift.TProtocol) (success bool
 	return
 }
 
-// Get a value from the processed args
+// Get the value of a named argument from the thrift args. takes the name of the thrift field,
+// not the name of the generated field
+func (p *ArgsRetainingProcessor) GetArgBytes(name string) ([]byte, error) {
+	if !p.gotArgs {
+		return nil, ErrNoArgs
+	}
+	argTyp := p.argsTyp().Elem() // turn type from "pointer to struct" into "struct"
+	nFields := argTyp.NumField()
+	var fieldIdx int
+	var field reflect.StructField
+	found := false
+
+	// get the index of the field asked for by looking at the tag for each member of the struct
+	for fieldIdx = 0; fieldIdx < nFields; fieldIdx++ {
+		field = argTyp.Field(fieldIdx)
+		if string(field.Tag) == name { // thrift structures are tagged with their thrift field name
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, ErrUnknownField
+	}
+	// get the value of the field and try to turn it into []byte
+	argsVal := reflect.ValueOf(p.args).Elem()
+	val := argsVal.Field(fieldIdx)
+	if !val.CanInterface() {
+		return nil, ErrWrongType
+	}
+	valFace := val.Interface()
+	valConcrete, ok := valFace.([]byte)
+	if !ok {
+		return nil, ErrWrongType
+	}
+	return valConcrete, nil
+}

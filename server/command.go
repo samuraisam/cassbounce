@@ -50,21 +50,21 @@ type Command interface {
 }
 
 type CassandraCommand struct {
-	name              string
-	typeId            thrift.TMessageType
-	seqId             int32
-	protocolFactory   *thrift.TBinaryProtocolFactory
-	didStealBytes     bool
-	stolenBytesTrans  *thrift.TTransport
-	stolenPacketsProt *thrift.TProtocol
-	stolenBytesCh     chan *CommandPacket
-	streamWasSet      bool
-	inPackets         chan *CommandPacket
+	name            string
+	typeId          thrift.TMessageType
+	seqId           int32
+	protocolFactory *thrift.TBinaryProtocolFactory
+	// didStealBytes     bool
+	// stolenBytesTrans  *thrift.TTransport
+	// stolenPacketsProt *thrift.TProtocol
+	// stolenBytesCh     chan *CommandPacket
+	streamWasSet bool
+	inPackets    chan *CommandPacket
 }
 
 func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
 	protoFac := thrift.NewTBinaryProtocolFactoryDefault()
-	exc := &CassandraCommand{name, typeId, seqId, protoFac, false, nil, nil, nil, false, nil}
+	exc := &CassandraCommand{name, typeId, seqId, protoFac, false, nil}
 	return exc
 }
 
