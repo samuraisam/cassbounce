@@ -112,6 +112,10 @@ func (r *CommandReceiver) Receive() {
 			continue // TODO: notify internal error
 		}
 
+		// determine which node on the ring would be best suited for this operation
+		tok, err := cmd.TokenHint()
+		log.Print("got token: ", tok, " err: ", err)
+
 		res := cmd.Execute(outboundConn, time.Duration(100)*time.Millisecond)
 
 		// res := <-r.poolManager.Do(connDef, func (conn *Connection) {

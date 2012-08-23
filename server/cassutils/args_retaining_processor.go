@@ -30,6 +30,11 @@ func init() {
 	constructorMap = make(map[string]func() interface{})
 	constructorMap["get"] = func() interface{} { return cassandra.NewGetArgs() }
 	constructorMap["get_slice"] = func() interface{} { return cassandra.NewGetSliceArgs() }
+	constructorMap["get_count"] = func() interface{} { return cassandra.NewGetCountArgs() }
+	constructorMap["insert"] = func() interface{} { return cassandra.NewInsertArgs() }
+	constructorMap["add"] = func() interface{} { return cassandra.NewAddArgs() }
+	constructorMap["remove"] = func() interface{} { return cassandra.NewRemoveArgs() }
+	constructorMap["remove_counter"] = func() interface{} { return cassandra.NewRemoveCounterArgs() }
 }
 
 type ArgsRetainingProcessor struct {
@@ -47,6 +52,8 @@ func NewArgsRetainingProcessor(name string) (*ArgsRetainingProcessor, error) {
 	}
 	return &ArgsRetainingProcessor{name, f, false, nil, nil}, nil
 }
+
+func (p *ArgsRetainingProcessor) GotArgs() bool { return p.gotArgs }
 
 // Process the arguments of a thrift call off the TProtocol and store it for future access
 // NOTE: this actually reads from the inbound protocol, so you will have to call the WriteArgs(TProtocol) method to

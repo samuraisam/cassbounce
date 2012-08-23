@@ -60,11 +60,12 @@ type CassandraCommand struct {
 	// stolenBytesCh     chan *CommandPacket
 	streamWasSet bool
 	inPackets    chan *CommandPacket
+	argsProc     *cassutils.ArgsRetainingProcessor
 }
 
 func NewCassandraCommand(name string, typeId thrift.TMessageType, seqId int32) *CassandraCommand {
 	protoFac := thrift.NewTBinaryProtocolFactoryDefault()
-	exc := &CassandraCommand{name, typeId, seqId, protoFac, false, nil}
+	exc := &CassandraCommand{name, typeId, seqId, protoFac, false, nil, nil}
 	return exc
 }
 
@@ -78,23 +79,36 @@ func (ce *CassandraCommand) TokenHint() (*cassutils.Token, error) {
 	if !ce.streamWasSet {
 		return nil, errors.New("Can not get token hint if stream has not been set (nothing to read from)")
 	}
-	switch ce.name {
-	case "get":
-	case "get_slice":
-	case "get_count":
-	case "insert":
-	case "add":
-	case "remove":
-	case "remove_counter":
+	err := ce.captureArgsMessage()
+	if err != nil {
+		return nil, err
+	}
+
+	availableSingle := []string{"get", "get_slice", "get_count", "insert", "add", "remove", "remove_counter"}
+	availableMulti := []string{"multiget_slice", "multiget_count"}
+
+	contains := func(haystack []string, needle string) bool {
+		for i := 0; i < len(haystack); i++ {
+			if haystack[i] == needle {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch {
+	case contains(availableSingle, ce.name):
 		// we will get the key
-		//return cassutils.NewToken(ce.scrapeKey(1))
-		return nil, nil
+		k, kerr := ce.argsProc.GetArgBytes("key")
+		if kerr != nil {
+			return nil, kerr
+		}
+		return cassutils.NewToken(k), nil
 		break
-	case "multiget_slice":
-	case "multiget_count":
+	case contains(availableMulti, ce.name):
 		// we will get the *first* key
 		//return cassutils.NewToken(ce.scrapeFirstKey(1))
-		return nil, nil
+		return nil, errors.New("Fart!")
 		break
 	default:
 		break
@@ -108,18 +122,41 @@ func (ce *CassandraCommand) SetStream(inPackets chan *CommandPacket) error {
 		return errors.New("Can not set stream twice")
 	}
 	ce.inPackets = inPackets
+	ce.streamWasSet = true
 	return nil
 }
 
-/*
- * 1. Begin executing the configured command (name/typeid/seqid) on the upstream server (some random cassandra instance)
- * 2. Stream all remaining inbound data (the rest of the command from some client) to the upstream server
- * 3. Read the response header from the upstream server
- * 4. Read all remaining upstream data and write it to the client via the `inPackets` chan
- */
-
+// Execute the current command on the given connection. If execution takes longer than `timeout` then
+// the returned channel will be closed just after sending a CommandPacket contianing an error
 func (ce *CassandraCommand) Execute(outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
 	return ce.doExecute(outConn, timeout)
+}
+
+func (ce *CassandraCommand) captureArgsMessage() error {
+	if !ce.streamWasSet {
+		return errors.New("Can not capture args message if stream is not yet set.")
+	}
+	args, err := cassutils.NewArgsRetainingProcessor(ce.name)
+	if err != nil {
+		return err
+	}
+	inProt := ce.protocolFactory.GetProtocol(NewCommandPacketTTransport(ce.inPackets))
+	success, err := args.ReadArgs(inProt)
+	if success {
+		ce.argsProc = args
+	}
+	return err
+}
+
+func (ce *CassandraCommand) writeArgsMessage(oprot thrift.TProtocol) thrift.TException {
+	success, texec, err := ce.argsProc.WriteArgs(oprot)
+	if success {
+		return nil
+	}
+	if texec != nil {
+		return texec
+	}
+	return thrift.NewTApplicationExceptionMessage(fmt.Sprintf("%s", err))
 }
 
 func (ce *CassandraCommand) doExecute(outConn Connection, timeout time.Duration) (outPackets <-chan *CommandPacket) {
@@ -135,34 +172,28 @@ func (ce *CassandraCommand) doExecute(outConn Connection, timeout time.Duration)
 		outTrans := outConn.Transport()
 		outProt := outConn.ProtocolFactory().GetProtocol(outTrans)
 
-		if ce.name == "get_slice" {
-			rp, _ := cassutils.NewArgsRetainingProcessor(ce.name)
-			succ, exc := rp.ReadArgs(ce.protocolFactory.GetProtocol(NewCommandPacketTTransport(ce.inPackets)))
-			if !succ {
-				log.Print("XXX: error reading args: ", exc)
-			} else {
-				le := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
-				log.Print("XXX: le: ", le)
-				s, e, r := rp.WriteArgs(outProt)
-				log.Print("XXX: s, e r: ", s, ", ", ", ", e, ", ", r)
-				//fe := outProt.WriteMessageEnd()
-				//log.Print("XXX: fe: ", fe)
-				fl := outProt.Transport().Flush()
-				log.Print("XXX: fl: ", fl)
-			}
-		} else {
-			// write our inbound command header to the upstream connection
-			headProtExc := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
+		// write our inbound command header to the upstream connection
+		headProtExc := outProt.WriteMessageBegin(ce.name, ce.typeId, ce.seqId)
 
-			// respond to errors from writing the command header
-			if headProtExc != nil {
-				// headProtExc is a thrift.TTException
-				log.Print("CassandraCommand:Execute error sending header to upsteram server: ", headProtExc)
-				ce.writeError(inProt, headProtExc)
+		// respond to errors from writing the command header
+		if headProtExc != nil {
+			// headProtExc is a thrift.TTException
+			log.Print("CassandraCommand:Execute error sending header to upsteram server: ", headProtExc)
+			ce.writeError(inProt, headProtExc)
+			return
+		}
+
+		if ce.argsProc != nil && ce.argsProc.GotArgs() {
+			// if we already read the args and processed it, write the processed args to the upstream server
+			writeExc := ce.writeArgsMessage(outProt)
+			outProt.WriteMessageEnd()
+			if writeExc != nil {
+				log.Print("CassandraCommand:Execute error writing processed args: ", writeExc)
+				ce.writeError(inProt, writeExc)
 				return
 			}
-
-			// write all of our inbound packets to the upstream server
+		} else {
+			// otherwise just write all inbound packets to the upstream server
 			for pkt := range ce.inPackets {
 				if pkt.Error() != nil {
 					// if we got an error, then bail
@@ -179,8 +210,9 @@ func (ce *CassandraCommand) doExecute(outConn Connection, timeout time.Duration)
 					return
 				}
 			}
-			outTrans.Flush() // get rid of it
 		}
+
+		outTrans.Flush() // get rid of the command
 
 		// start reading a connection, block until it's ready
 		oName, oTypId, oSeqId, oErr := outProt.ReadMessageBegin()
