@@ -65,7 +65,7 @@ func (p *ArgsRetainingProcessor) ReadArgs(iprot thrift.TProtocol) (success bool,
 	// ok, so this may look a little silly/stupid/insane, but, we're doing it this way (using reflect) to
 	// generalize over the generated thrift bindings, which are pretty rigid and offer little extensibility
 	t1 := time.Now()
-	defer func() { 
+	defer func() {
 		t := config.Get().Timer("cassbounce.server.cassutils.ArgsRetainingProcessor.ReadArgs")
 		t.Update(uint64(time.Now().Sub(t1)))
 	}()

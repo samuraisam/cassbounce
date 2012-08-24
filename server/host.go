@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cassbounce/server/config"
 	"errors"
 	"fmt"
 	"log"
@@ -8,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"cassbounce/server/config"
 )
 
 /*

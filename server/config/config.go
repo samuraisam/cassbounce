@@ -1,15 +1,12 @@
 package config
 
 import (
-	// "log"
-	// "net"
-	"time"
 	"github.com/rcrowley/go-metrics"
+	"time"
 )
 
 // App settings - global app configuration
 type AppSettings struct {
-	// InitialServerList            []Host        // list of hosts that was passed into the command line
 	NodeAutodiscovery            bool          // whether or not to set the HostList to autodiscover
 	ListenAddress                string        // what interface to listen for new clients on
 	ReceiverType                 string        // what receiver to use (for now, must only be "command")
@@ -40,11 +37,8 @@ func NewAppSettings() *AppSettings {
 
 // Global app object
 type App struct {
-	// hostList     HostList     // host list service - manages a list of up/down outbound servers
-	settings     *AppSettings // global settings used throughout the app
-	ShutdownChan chan int     // channel used when we want to shut down services
-	// poolMan      PoolManager  // pool manager service - manages a list outbound connection pools
-	metricsRegistry metrics.Registry
+	settings        *AppSettings     // global settings used throughout the app
+	metricsRegistry metrics.Registry // global metrics registry
 }
 
 // the global app object
@@ -58,53 +52,15 @@ func Get() *App {
 	}
 	// create a new one since it didn't exist already
 	currentApp = &App{}
+	// set up metrics reporting
 	currentApp.metricsRegistry = metrics.NewRegistry()
+
 	return currentApp
 }
 
 // TODO: this could respond to some environmental change
 func (a *App) SetSettings(s *AppSettings) { a.settings = s }
 func (a *App) Settings() *AppSettings     { return a.settings }
-
-// func (a *App) SetHostList(h HostList) { a.hostList = h }
-// func (a *App) HostList() HostList     { return a.hostList }
-
-// func (a *App) poolManager() PoolManager { // lazily load a PoolManager
-// 	if a.poolMan == nil {
-// 		switch a.settings.PoolManagerType {
-// 		case "simple":
-// 		default:
-// 			a.poolMan = NewSimplePoolManager()
-// 		}
-// 	}
-// 	return a.poolMan
-// }
-
-// listen forever on the interface a.ListenAddress
-// func (a *App) Listen() error {
-// 	listener, err := net.Listen("tcp", a.Settings().ListenAddress)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	log.Print("App:Listen now accepting connections on interface: ", a.settings.ListenAddress)
-// 	for {
-// 		conn, err := listener.Accept()
-// 		if err != nil {
-// 			log.Print("App:Listen error accepting connection: ", err)
-// 			continue
-// 		}
-// 		// create a receiver for this connection
-// 		var receiver Receiver
-// 		rtype := a.settings.ReceiverType
-
-// 		if rtype == "command" {
-// 			receiver = NewCommandReceiver(conn, a.hostList, a.poolManager())
-// 		}
-
-// 		go receiver.Receive()
-// 	}
-// 	return nil
-// }
 
 func (a *App) Timer(n string) metrics.Timer {
 	var t metrics.Timer = nil

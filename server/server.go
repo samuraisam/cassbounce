@@ -10,9 +10,9 @@ import (
 
 // Global app object
 type App struct {
-	hostList     HostList     // host list service - manages a list of up/down outbound servers
-	ShutdownChan chan int     // channel used when we want to shut down services
-	poolMan      PoolManager  // pool manager service - manages a list outbound connection pools
+	hostList     HostList    // host list service - manages a list of up/down outbound servers
+	ShutdownChan chan int    // channel used when we want to shut down services
+	poolMan      PoolManager // pool manager service - manages a list outbound connection pools
 }
 
 func New() *App {
