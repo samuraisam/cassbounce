@@ -2,6 +2,7 @@ package main
 
 import (
 	"cassbounce/server"
+	"cassbounce/server/config"
 	"flag"
 	"log"
 	"os"
@@ -62,7 +63,7 @@ func main() {
 	shutdown := make(chan int)
 
 	// settings
-	settings := server.NewAppSettings()
+	settings := config.NewAppSettings()
 	// settings.InitialServerList = initial
 	settings.NodeAutodiscovery = *nodeAutodiscovery
 	settings.ListenAddress = *listenAddress
@@ -73,10 +74,11 @@ func main() {
 	settings.PoolConnectionAcquireTimeout = time.Duration(*poolConnectionAcquireTimeout) * time.Millisecond
 	settings.PoolConnectionAcquireRetries = *poolConnectionAcquireRetries
 
+	config.Get().SetSettings(settings)
+
 	// global app
-	app := server.GetApp()
+	app := server.New()
 	app.ShutdownChan = shutdown
-	app.SetSettings(settings)
 
 	// host list set up (this must happen after the global app object is set up)
 	initial := parseInitialServerList(*initialServerList)
@@ -88,7 +90,7 @@ func main() {
 	err := app.Listen()
 
 	if err != nil {
-		log.Fatal("Could not listen on interface: ", app.Settings().ListenAddress, " error: ", err)
+		log.Fatal("Could not listen on interface: ", settings.ListenAddress, " error: ", err)
 		os.Exit(1)
 	}
 }

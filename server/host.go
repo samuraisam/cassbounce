@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"cassbounce/server/config"
 )
 
 /*
@@ -89,7 +90,7 @@ func NewCassandraHostList(initialHostList []CassandraHost, useAutodiscovery bool
 	}
 
 	// TODO: configurable whether or not to poll, poll frequency
-	pollForever := GetApp().Settings().PollServersForever
+	pollForever := config.Get().Settings().PollServersForever
 	ret.StartPollingServers(true, pollForever, time.Duration(5)*time.Second) // comb the up list to include only up nodes
 
 	if useAutodiscovery {

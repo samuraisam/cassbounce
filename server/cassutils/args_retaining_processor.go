@@ -6,6 +6,9 @@ import (
 	"github.com/pomack/thrift4go/lib/go/src/thrift"
 	"log"
 	"reflect"
+	"time"
+	// "cassbounce/server"
+	"cassbounce/server/config"
 )
 
 var (
@@ -61,7 +64,11 @@ func (p *ArgsRetainingProcessor) GotArgs() bool { return p.gotArgs }
 func (p *ArgsRetainingProcessor) ReadArgs(iprot thrift.TProtocol) (success bool, err thrift.TException) {
 	// ok, so this may look a little silly/stupid/insane, but, we're doing it this way (using reflect) to
 	// generalize over the generated thrift bindings, which are pretty rigid and offer little extensibility
-
+	t1 := time.Now()
+	defer func() { 
+		t := config.Get().Timer("cassbounce.server.cassutils.ArgsRetainingProcessor.ReadArgs")
+		t.Update(uint64(time.Now().Sub(t1)))
+	}()
 	// run the constructor which will return for us an interface{}
 	args := p.constructor()
 	// reflect the type of the interface{} (which is some args instance)
