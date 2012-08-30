@@ -272,7 +272,19 @@ func (l *CassandraHostList) NodeAutoDiscovery(frequency time.Duration) {
 		case <-time.After(frequency):
 			log.Print("CassandraHostList:NodeAutoDiscovery waking up ")
 			// get a new connection to cassandra
-
+			host, err := l.Get()
+			if err != nil {
+				log.Print("CassandraHostList:NodeAutoDiscovery error getting initial host for discovery: ", err)
+				continue
+			}
+			timeout := time.Duration(100) * time.Millisecond // TODO: configure timeout
+			conn, err := Dial(host.String(), "", timeout)
+			if err != nil {
+				log.Print("CassandraHostList:NodeAutoDiscovery error gettring connection to initial host for discovery: ", err)
+				continue
+			}
+			ring, ire, err := conn.client.DescribeRing("cassbounce")
+			log.Print("ring: ", ring, "ire: ", ire, "err: ", err)
 		}
 	}
 }

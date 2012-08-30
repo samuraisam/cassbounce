@@ -21,7 +21,7 @@ var (
 
 	// host list options
 	initialServerList = flag.String("initial-servers", "0.0.0.0:9160", "A list of cassandra nodes to connect to initially")
-	nodeAutodiscovery = flag.Bool("node-autodiscovery", false, "Whether or not to introspect the ring to discover new nodes")
+	nodeAutodiscovery = flag.Bool("node-autodiscovery", true, "Whether or not to introspect the ring to discover new nodes")
 	pollServers       = flag.Bool("perform-health-checks", false, "Whether or not to perform health checks on remote hosts")
 
 	// pool options

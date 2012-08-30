@@ -133,7 +133,7 @@ type Pool interface {
 
 	// DoParalell(ex []Execution) ([]Result, []Error) // do a series of thrift commands in paralell on any conneciton
 
-	// Do(cmd *Command, timeout time.Duration) (Result, error)
+	//Do(cmd *Command, timeout time.Duration) (<-chan *CommandPacket)
 
 	// relinquish the use of a connection
 	// Put(conn Connection)
